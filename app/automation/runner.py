@@ -2701,6 +2701,11 @@ class _OwnerThreadJourney:
         return self._run_steps(page)
 
     def submit(self, page: Page, confirmation_id: str) -> Mapping[str, object]:
+        if getattr(self.runner, "preparation_guard", None) is not None:
+            return self._result(
+                "NEEDS_USER", reason="Preparation authority never permits submission",
+                risk_level=3, blocked_reasons=("preparation_guard",),
+            )
         if confirmation_id != self.application_id:
             return {"state": "FINAL_REVIEW", "reason": "Exact application confirmation mismatch"}
         found, reason = self._boundary(page)

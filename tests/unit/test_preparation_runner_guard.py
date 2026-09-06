@@ -70,6 +70,19 @@ def test_bridge_runner_rejects_other_modes_before_database_or_browser(mode):
         runner.run('opaque-application', mode, headed=True)
 
 
+def test_retained_bridge_journey_cannot_be_upgraded_to_submit():
+    journey, mutations = make_journey(lambda: True)
+    journey.application_id = 'opaque-application'
+    journey._result = lambda state, **values: dict(state=state, **values)
+    def forbidden_probe(*args):
+        pytest.fail('bridge submit reached the browser')
+    journey._boundary = forbidden_probe
+    result = journey.submit(object(), 'opaque-application')
+    assert result['state'] == 'NEEDS_USER'
+    assert result['blocked_reasons'] == ('preparation_guard',)
+    assert mutations == []
+
+
 def test_bridge_runner_checks_guard_before_directory_or_database_mutation():
     runner = AutomationRunner(
         None, None, None,
