@@ -1,4 +1,12 @@
-# Public source verification — 2026-09-06
+# Public source verification
+
+## Preparation bridge publication
+
+Fresh scoped checks and unresolved acceptance limits for the preparation bridge
+are recorded in [PREPARATION_BRIDGE_VERIFICATION.md](docs/PREPARATION_BRIDGE_VERIFICATION.md).
+The baseline numbers below are historical and do not certify the bridge revision.
+
+## Baseline source publication — 2026-09-06
 
 This is a source publication, not a signed release, installed upgrade, or
 certification of real-employer autonomous applications.

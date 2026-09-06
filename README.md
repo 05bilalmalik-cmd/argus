@@ -31,9 +31,11 @@ installed upgrade or a signed binary release.
 **Current limitation:** autonomous end-to-end applications to real employers
 have not been demonstrated. Local/synthetic test success is not evidence of
 unattended reliability across public employer portals. Supported form handling
-and human handoffs exist; a working ARGUS-to-Hermes CUA form-filling bridge is
-not included. See [the intended end state](docs/ARGUS_HERMES_ENDSTATE.md), which
-is a design document, not a delivered capability.
+and human handoffs exist. An experimental [controlled preparation MCP bridge](docs/PREPARATION_BRIDGE.md)
+is included, together with a [portable operating skill](skills/argus-preparation-bridge/SKILL.md).
+Its full application acceptance is incomplete; it is not a general CUA or autonomous
+submission bridge. See [the intended end state](docs/ARGUS_HERMES_ENDSTATE.md),
+which remains a design document rather than a delivered end-to-end capability.
 
 The public export excludes candidate profiles, CVs, local databases, browser
 captures, private operational records, caches, backups, and private Git history.

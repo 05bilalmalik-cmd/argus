@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import FastAPI, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.config import Settings
 from app.db import configure_database
-from app.routers import api, handoff, lab, mail, pages, scout, scout_pages, sweep
+from app.routers import api, handoff, lab, mail, pages, preparation_bridge, scout, scout_pages, sweep
 from app.security.crypto import CryptoBox
 from app.security.http import LocalSecurityMiddleware
 from app.services.navigator import ApplicationNavigator, bind_service_navigator
@@ -20,7 +22,16 @@ from app.services.target_resolution import NavigatorTargetResolver
 from app.version import __version__
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, *, preparation_bridge_enabled: bool | None = None,
+) -> FastAPI:
+    if preparation_bridge_enabled is None:
+        flag = os.environ.get('ARGUS_ENABLE_PREPARATION_BRIDGE', 'false').lower()
+        if flag not in {'true', 'false'}:
+            raise ValueError('ARGUS_ENABLE_PREPARATION_BRIDGE must be true or false')
+        preparation_bridge_enabled = flag == 'true'
+    if type(preparation_bridge_enabled) is not bool:
+        raise ValueError('Preparation bridge enablement must be explicit boolean')
     resolved = settings or Settings.load()
     resolved.ensure_directories()
     database = configure_database(resolved)
@@ -30,6 +41,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         database.create_schema()
+        if app.state.preparation_bridge is not None:
+            app.state.preparation_bridge.start()
         from app.scouting.scheduler import start_scheduler
 
         start_scheduler(app, resolved.sweep_interval_hours)
@@ -51,7 +64,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     try:
                         stop_scheduler()
                     finally:
-                        notifier.flush()
+                        try:
+                            notifier.flush()
+                        finally:
+                            bridge = app.state.preparation_bridge
+                            if bridge is not None:
+                                bridge.stop()
 
     app = FastAPI(
         title="ARGUS",
@@ -76,6 +94,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Keep the legacy state key for runner/API callers while routing all new
     # handoff operations through the owner-thread navigator.
     app.state.handoff_manager = app.state.navigator
+    app.state.preparation_bridge = None
+    if preparation_bridge_enabled:
+        from app.services.preparation_bridge import PreparationBridge
+
+        def execute_prefill(application_id, guard):
+            # Private in-process reuse, not an internal general-API HTTP call.
+            return api._prefill_application(
+                application_id, SimpleNamespace(app=app), preparation_guard=guard,
+            )
+
+        app.state.preparation_bridge = PreparationBridge(
+            database, resolved, crypto, app.state.navigator, execute_prefill,
+            enabled=True,
+        )
     # Source-target resolution is application-owned.  The resolver receives
     # only the exact application id from the API and delegates to the
     # Navigator's headed source-resolution hook; it never accepts a caller
@@ -89,6 +121,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.include_router(api.router)
+    app.include_router(preparation_bridge.router)
     app.include_router(mail.router)
     app.include_router(lab.router)
     app.include_router(pages.router)

@@ -88,6 +88,21 @@ class SubmissionBlocked(RuntimeError):
         self.code = code
 
 
+def _assert_preparation_guard(runner: Any) -> None:
+    """Optional trusted callback; implicit or false results deny authority."""
+    guard = getattr(runner, "preparation_guard", None)
+    if guard is None:
+        return
+    try:
+        permitted = guard() is True
+    except Exception:
+        permitted = False
+    if not permitted:
+        raise SubmissionBlocked(
+            "Preparation authority is no longer valid", code="preparation_guard"
+        ) from None
+
+
 _DEFAULT_JOURNEY_WAIT_SECONDS = 300
 _MIN_JOURNEY_WAIT_SECONDS = 30
 _MAX_JOURNEY_WAIT_SECONDS = 900
@@ -1862,6 +1877,7 @@ class _OwnerThreadJourney:
 
 
     def _fill_resolved_action(self, scope: Any, action: FieldAction) -> None:
+        _assert_preparation_guard(self.runner)
         mapping = getattr(action, "mapping", None)
         canonical_key = getattr(mapping, "canonical_key", None)
         key = str(getattr(canonical_key, "value", canonical_key) or "")
@@ -2175,8 +2191,21 @@ class _OwnerThreadJourney:
             payload.setdefault("bound_intent", dict(self.submission_binding))
         return payload
 
+    def _preparation_stop(self) -> dict[str, object] | None:
+        try:
+            _assert_preparation_guard(self.runner)
+        except SubmissionBlocked:
+            return self._result(
+                "NEEDS_USER", reason="Preparation authority is no longer valid",
+                risk_level=3, blocked_reasons=("preparation_guard",),
+            )
+        return None
+
     def _run_steps(self, page: Any) -> dict[str, object]:
         for _ in range(32):
+            preparation_stop = self._preparation_stop()
+            if preparation_stop is not None:
+                return preparation_stop
             egress_stop = self._egress_stop_result(stage="before_inspect")
             if egress_stop is not None:
                 return egress_stop
@@ -2268,6 +2297,11 @@ class _OwnerThreadJourney:
                     try:
                         self._fill_resolved_action(scope, action)
                     except Exception as exc:  # noqa: BLE001 - preserve the visible handoff
+                        if isinstance(exc, SubmissionBlocked) and exc.code == "preparation_guard":
+                            return self._result(
+                                "NEEDS_USER", reason="Preparation authority is no longer valid",
+                                risk_level=3, blocked_reasons=("preparation_guard",),
+                            )
                         failed_fields.append(field_identity)
                         failed_field_reasons[field_identity] = str(
                             getattr(exc, "reason_code", "prefill_failed") or "prefill_failed"
@@ -2373,6 +2407,11 @@ class _OwnerThreadJourney:
                     try:
                         self._fill_resolved_action(scope, action)
                     except Exception as exc:  # noqa: BLE001 - one control is not the form
+                        if isinstance(exc, SubmissionBlocked) and exc.code == "preparation_guard":
+                            return self._result(
+                                "NEEDS_USER", reason="Preparation authority is no longer valid",
+                                risk_level=3, blocked_reasons=("preparation_guard",),
+                            )
                         egress_stop = self._egress_stop_result(
                             stage="fill",
                             prefilled_fields=prefilled_fields,
@@ -2604,6 +2643,9 @@ class _OwnerThreadJourney:
         )
 
     def prepare(self, page: Page) -> Mapping[str, object]:
+        preparation_stop = self._preparation_stop()
+        if preparation_stop is not None:
+            return preparation_stop
         # The owner worker navigates only to resolution.final_url. Confirm the
         # actual origin remains the verified application origin before any
         # adapter entry click.
@@ -2635,7 +2677,11 @@ class _OwnerThreadJourney:
                 risk_level=4,
                 blocked_reasons=("destination_identity_unverified",),
             )
-        if self.adapter_name == "workday":
+        if getattr(self.runner, "preparation_guard", None) is not None:
+            # A bridge grant never authorizes entry clicks or page advancement.
+            # Inspect the already-accessible form, or stop for a human.
+            entered = True
+        elif self.adapter_name == "workday":
             entered = bool(getattr(self.adapter, "enter_application_flow")(page))
         else:
             entered = bool(getattr(self.adapter, "enter_application_flow", lambda _page: True)(page))
@@ -2655,6 +2701,11 @@ class _OwnerThreadJourney:
         return self._run_steps(page)
 
     def submit(self, page: Page, confirmation_id: str) -> Mapping[str, object]:
+        if getattr(self.runner, "preparation_guard", None) is not None:
+            return self._result(
+                "NEEDS_USER", reason="Preparation authority never permits submission",
+                risk_level=3, blocked_reasons=("preparation_guard",),
+            )
         if confirmation_id != self.application_id:
             return {"state": "FINAL_REVIEW", "reason": "Exact application confirmation mismatch"}
         found, reason = self._boundary(page)
@@ -2960,7 +3011,11 @@ class AutomationRunner:
         registry: AdapterRegistry | None = None,
         handoff_manager=None,
         notifier: NotificationService | None = None,
+        preparation_guard: Callable[[], bool] | None = None,
     ) -> None:
+        if preparation_guard is not None and not callable(preparation_guard):
+            raise TypeError("Preparation authority requires a callable guard")
+        self.preparation_guard = preparation_guard
         self.database = database
         self.settings = settings
         self.crypto = crypto
@@ -3691,6 +3746,7 @@ class AutomationRunner:
                 "screenshot_path": str(screenshot_path),
             }
         )
+        _assert_preparation_guard(self)
         session_snapshot = navigator.start(
             application.id,
             mode,
@@ -3705,6 +3761,7 @@ class AutomationRunner:
             session_snapshot.session_id,
             owned_navigator,
         )
+        _assert_preparation_guard(self)
         navigator.run_journey(session_snapshot.session_id)
         result = dict(
             navigator.wait_for_journey_result(
@@ -4538,6 +4595,11 @@ class AutomationRunner:
         session_id: str = "",
         authority_id: str = "",
     ) -> AutomationOutcome:
+        if self.preparation_guard is not None and mode is not RunMode.PREFILL:
+            raise SubmissionBlocked(
+                "Preparation authority permits PREFILL only", code="preparation_guard"
+            )
+        _assert_preparation_guard(self)
         self.settings.ensure_directories()
         notification_event: HumanAttentionEvent | None = None
         claimed_application_id = ""

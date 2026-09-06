@@ -30,6 +30,7 @@ def test_prefill_with_risk_zero_does_not_advance():
             return False
 
     journey = object.__new__(_OwnerThreadJourney)
+    journey.runner = SimpleNamespace(preparation_guard=None)
     journey.application_id = "prefill-no-advance-test"
     journey.opportunity = SimpleNamespace(employer="TestCorp", role_title="Analyst")
     journey.resolution = TargetResolution(
@@ -103,6 +104,7 @@ def test_non_prefill_mode_still_advances():
             return False
 
     journey = object.__new__(_OwnerThreadJourney)
+    journey.runner = SimpleNamespace(preparation_guard=None)
     journey.application_id = "submit-advance-test"
     journey.opportunity = SimpleNamespace(employer="TestCorp", role_title="Analyst")
     journey.resolution = TargetResolution(

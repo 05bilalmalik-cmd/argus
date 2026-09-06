@@ -19,9 +19,11 @@ dependencies = [
   "httpx>=0.27,<1",
   "cryptography>=43,<47",
   "beautifulsoup4>=4.12,<5",
+  "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
+bridge = ["mcp>=1.29.1,<2"]
 dev = [
   "pytest>=8,<10",
   "pytest-asyncio>=0.24,<2",
@@ -32,6 +34,9 @@ argus = "app.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["static/**/*", "templates/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
