@@ -20,6 +20,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 
 from app.bridge.storage import BridgeStorage
+from app.bridge.protocol import validate_reply
 from app.models import Application, AutomationRun, CandidateProfile, AnswerEntry, Document, ConflictRule
 from app.services.applications import ApplicationService
 
@@ -40,7 +41,7 @@ def _columns(record):
 
 
 def wire(status, reason='NONE', run_id=None, *, pending=0, handoffs=None, next_cursor=None):
-    return {'protocol': 'argus.preparation.v1', 'status': status, 'reason': reason, 'run_id': run_id, 'pending': min(100000, max(0, pending)), 'handoffs': handoffs or [], 'next_cursor': next_cursor}
+    return validate_reply({'protocol': 'argus.preparation.v1', 'status': status, 'reason': reason, 'run_id': run_id, 'pending': pending, 'handoffs': [] if handoffs is None else handoffs, 'next_cursor': next_cursor})
 
 
 class PreparationBridge:
@@ -72,6 +73,20 @@ class PreparationBridge:
                 if orphaned:
                     connection.execute("UPDATE bridge_state SET paused='INTERRUPTED' WHERE id=1")
                     connection.execute('UPDATE bridge_grants SET revoked=1')
+
+    def stop(self):
+        """Release only this server's lease, fencing interrupted execution."""
+        if self._runtime_lock is None:
+            return
+        try:
+            with self._store().transaction() as connection:
+                orphaned = connection.execute("UPDATE bridge_runs SET status='INTERRUPTED',reason='INTERRUPTED' WHERE status='RUNNING'").rowcount
+                if orphaned:
+                    connection.execute("UPDATE bridge_state SET paused='INTERRUPTED' WHERE id=1")
+                    connection.execute('UPDATE bridge_grants SET revoked=1')
+        finally:
+            self._runtime_lock.close()
+            self._runtime_lock = None
 
     def authenticate(self, token):
         if not self.enabled or not isinstance(token, str) or re.fullmatch(r'[0-9a-f]{64}', token) is None:
@@ -290,7 +305,7 @@ class PreparationBridge:
             session_id = result.get('handoff_session_id')
             with self.database.SessionLocal() as session:
                 underlying = session.get(AutomationRun, underlying_id) if canonical_uuid(underlying_id) else None
-                integrity = self._submission_evidence(result) or (underlying is not None and (underlying.state in {'SUBMITTED', 'CONFIRMATION_VERIFIED'} or underlying.receipt_json not in (None, '', '{}', 'null')))
+                integrity = self._submission_evidence(result) or (underlying is not None and (underlying.state in {'SUBMITTED', 'CONFIRMATION_VERIFIED', 'CONFIRMED', 'UNKNOWN'} or underlying.receipt_json not in (None, '', '{}', 'null')))
                 correlated = underlying is not None and underlying.application_id == grant['application_id'] and underlying.mode == 'prefill' and underlying.state in {'NEEDS_USER', 'READY_TO_SUBMIT'}
             if integrity:
                 self._pause('INTEGRITY')
@@ -301,6 +316,7 @@ class PreparationBridge:
             if not integrity and correlated and live and str(live.state) in {'FINAL_REVIEW', 'HUMAN_REQUIRED'}:
                 status = 'PREFILLED_HANDOFF' if str(live.state) == 'FINAL_REVIEW' else 'HUMAN_REQUIRED'
                 reason = 'HANDOFF'
+                self._pause('HANDOFF')
         except PreparationRefused as exc:
             status, reason = 'REFUSED', str(exc)
         except Exception:
@@ -315,7 +331,7 @@ class PreparationBridge:
             for key, item in value.items():
                 if key in {'receipt', 'receipt_json', 'submitted', 'click_boundary_crossed', 'submit_clicked', 'final_click_attempted', 'submission_attempted', 'next_clicked', 'apply_clicked'} and item:
                     return True
-                if key in {'state', 'status'} and item in ('SUBMITTED', 'CONFIRMATION_VERIFIED'):
+                if key in {'state', 'status'} and item in ('SUBMITTED', 'CONFIRMATION_VERIFIED', 'CONFIRMED', 'UNKNOWN'):
                     return True
                 if cls._submission_evidence(item):
                     return True

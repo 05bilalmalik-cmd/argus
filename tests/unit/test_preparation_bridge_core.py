@@ -108,6 +108,8 @@ def test_operator_approval_freezes_prepared_application_and_persists_single_use_
     assert second.dispatch('get_preparation_run', {'run_id': result['run_id']}) == result
     assert second.dispatch('request_approved_preparation', {'idempotency_key': 'approved_key'}) == result
     env.nav.sessions.clear()
+    assert second.dispatch('get_preparation_readiness', {})['status'] == 'PAUSED'
+    second.clear_pause()
     assert second.dispatch('request_approved_preparation', {'idempotency_key': 'another_key'})['reason'] == 'NO_APPROVAL'
     assert env.calls == [app_id]
     assert (env.settings.data_dir / 'preparation_bridge.sqlite3').is_file()

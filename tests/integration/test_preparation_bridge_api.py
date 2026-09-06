@@ -27,6 +27,7 @@ def bridge_client(tmp_path):
     called = []
     bridge = SimpleNamespace(
         start=lambda: None,
+        stop=lambda: None,
         authenticate=lambda token: token == TOKEN,
         dispatch=lambda operation, body: called.append((operation, body)) or reply(),
     )

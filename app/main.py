@@ -64,7 +64,12 @@ def create_app(
                     try:
                         stop_scheduler()
                     finally:
-                        notifier.flush()
+                        try:
+                            notifier.flush()
+                        finally:
+                            bridge = app.state.preparation_bridge
+                            if bridge is not None:
+                                bridge.stop()
 
     app = FastAPI(
         title="ARGUS",
@@ -95,12 +100,9 @@ def create_app(
 
         def execute_prefill(application_id, guard):
             # Private in-process reuse, not an internal general-API HTTP call.
-            result = api._prefill_application(
+            return api._prefill_application(
                 application_id, SimpleNamespace(app=app), preparation_guard=guard,
             )
-            if isinstance(result, Response):
-                return {'state': 'BLOCKED', 'preparation_refused': True}
-            return result
 
         app.state.preparation_bridge = PreparationBridge(
             database, resolved, crypto, app.state.navigator, execute_prefill,
