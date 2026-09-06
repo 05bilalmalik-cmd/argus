@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ARGUS Capture</title><link rel="stylesheet" href="extension.css"></head>
+<body>
+  <main class="shell">
+    <header class="brand"><span class="mark"><i></i><i></i><i></i></span><span><strong>ARGUS</strong><small>CAPTURE RELAY</small></span><span class="posture">LOCAL</span></header>
+    <section class="panel">
+      <p class="hint">Review the page details below. ARGUS sends only this user-confirmed opportunity to your local inbox; it does not crawl the site.</p>
+      <form id="capture-form">
+        <label>Employer<input id="employer" name="employer" maxlength="240" required autocomplete="organization"></label>
+        <label>Role title<input id="role-title" name="role_title" maxlength="320" required></label>
+        <div class="row"><label>Location<input id="location" name="location" maxlength="240"></label><label>Cycle<input id="cycle" name="cycle" maxlength="40" required></label></div>
+        <input id="page-url" name="url" type="hidden">
+        <button class="button" id="submit" type="submit">Send to opportunity inbox</button>
+      </form>
+      <p class="message" id="message" role="status" aria-live="polite"></p>
+      <div class="footer"><a href="options.html" target="_blank">Connection settings</a><span class="url" id="url-preview"></span></div>
+    </section>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

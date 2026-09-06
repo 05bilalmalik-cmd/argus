@@ -1,0 +1,39 @@
+{% extends "base.html" %}{% block content %}
+<div class="notice critical"><div><span>!</span></div><div><b>Human boundary</b><p>These items stopped because ARGUS found a CAPTCHA, a legal declaration, sensitive questions, an unverified destination, or lost submission evidence. Nothing here was silently submitted. Finish each one by hand or choose the listed action.</p></div></div>
+<section class="panel"><div class="section-heading"><div><span class="kicker">INTERRUPT QUEUE</span><h3>Decisions requiring you</h3></div><span class="count warning">{{ records|length }}</span></div>
+{% if records %}<div class="card-list">{% for item in records %}<article class="opportunity-card alert-card" data-application-id="{{ item.application.id }}">
+  <div class="company-mark" aria-hidden="true">!</div>
+  <div class="card-main">
+    <div class="card-title"><div><h4>{{ item.opportunity.employer }}</h4><p>{{ item.opportunity.role_title }}</p></div><span class="state state-{{ item.state|lower|replace('_','-') }}">{{ item.state|replace('_',' ') }}</span></div>
+    <div class="block-reason"><b>Next action</b><span>{{ item.application.next_action or 'Review the application evidence.' }}</span></div>
+    <div class="target-summary" aria-label="Application target status"><span class="status-chip {% if item.target.automation_eligible %}ok{% else %}warning{% endif %}">{{ item.target.label }}</span>{% for reason in item.target.reasons %}<span class="target-reason">{{ reason }}</span>{% endfor %}</div>
+    <div class="control-row handoff-controls">
+      {% if item.target.target_choice_required %}<form class="target-choice-form" data-api-form action="/api/applications/{{ item.application.id }}/choose-target" method="POST" data-refresh="true" data-confirm-form="Record this exact human role choice and rerun identity checks? No submission will be made."><input type="hidden" name="application_id" value="{{ item.application.id }}"><fieldset><legend>Choose the exact role from the listing</legend>{% for candidate in item.target.candidate_roles %}<label class="check-card"><input type="radio" name="application_url" value="{{ candidate.url }}" required><span><b>{{ candidate.title }}</b>{% if candidate.location %}<small>{{ candidate.location }}</small>{% endif %}{% if candidate.programme_type %}<small>{{ candidate.programme_type }}</small>{% endif %}</span></label>{% endfor %}</fieldset><label>Why did you choose this role?<textarea name="resolution_reason" rows="2" minlength="8" maxlength="4000" required></textarea></label><label class="check-card"><input type="checkbox" name="confirmed" required><span><b>I checked the employer, role and exact URL</b><small>ARGUS will not auto-select or submit</small></span></label><button class="button compact primary" type="submit">Choose role &amp; verify URL</button></form>
+      {% elif item.state in ['NEEDS_USER', 'FAILED_RETRYABLE'] and item.target.navigator_allowed %}<button class="button compact primary" type="button" data-navigator-start data-application-id="{{ item.application.id }}" data-employer="{{ item.opportunity.employer }}" data-role="{{ item.opportunity.role_title }}" data-provider="{{ item.target.provider }}" data-navigator-verified="true" data-confirm="Resume this exact application in the visible Navigator and fill or recheck only approved fields? ARGUS will stop before submission or at any human-only boundary.">{{ 'Resume Navigator' if item.state == 'FAILED_RETRYABLE' else 'Continue in Navigator' }}</button>
+      {% elif item.state in ['NEEDS_USER', 'FAILED_RETRYABLE'] %}<span class="section-copy warning-copy">Navigator unavailable: {{ item.target.label }}. Use the source-only link for manual review.</span>
+      {% elif item.state == 'NEEDS_OA' %}<span class="section-copy">Human-only assessment. Complete the assessment yourself; ARGUS will not resume or submit it.</span>
+      {% elif item.state == 'BLOCKED' %}<form class="blocker-resolution-form" data-api-form action="/api/applications/{{ item.application.id }}/resolve-blocker" method="POST" data-refresh="true" data-confirm-form="I reviewed the blocker for this exact application and want ARGUS to rerun eligibility, conflict, and package checks. No submission will be made. Continue?"><input type="hidden" name="application_id" value="{{ item.application.id }}"><label class="sr-only" for="blocker-reason-{{ item.application.id }}">Resolution reason</label><textarea id="blocker-reason-{{ item.application.id }}" name="resolution_reason" rows="2" minlength="8" maxlength="4000" required placeholder="What did you verify or change?"></textarea><label class="check-card"><input type="checkbox" name="confirmed" required><span><b>Confirm human resolution</b><small>Rechecks only; never submits</small></span></label><button class="button compact primary" type="submit">Record resolution &amp; rerun checks</button></form>
+      {% elif item.state == 'READY_TO_SUBMIT' and item.target.navigator_allowed %}<button class="button compact primary" type="button" data-navigator-start data-application-id="{{ item.application.id }}" data-employer="{{ item.opportunity.employer }}" data-role="{{ item.opportunity.role_title }}" data-provider="{{ item.target.provider }}" data-navigator-verified="true" data-confirm="Reopen this exact application in the visible Navigator and recheck its approved fields before final confirmation? ARGUS will not submit yet.">Review exact manifest</button>
+      {% elif item.state == 'READY_TO_SUBMIT' %}<span class="section-copy warning-copy">Ready state is stranded until a verified application target is restored; no submit action is available.</span>
+      {% elif item.state == 'SUBMISSION_UNKNOWN' %}<span class="section-copy warning-copy">Outcome unknown. Reconcile with the employer record first. Do not retry.</span>
+      {% endif %}
+      <a class="button compact ghost source-only" href="{{ item.opportunity.url }}" target="_blank" rel="noopener noreferrer">Open source <span aria-hidden="true">↗</span></a>
+      <a class="button tiny ghost" href="/applications/{{ item.application.id }}">Details</a>
+    </div>
+    <div class="navigator-panel navigator-panel-inline" data-navigator-panel data-application-id="{{ item.application.id }}" data-application-state="{{ item.state }}" data-employer="{{ item.opportunity.employer }}" data-role="{{ item.opportunity.role_title }}" data-provider="{{ item.target.provider }}" hidden>
+      <div class="navigator-panel-head"><span class="kicker">LOCAL NAVIGATOR</span><span class="state" data-navigator-state>OPENING</span></div>
+      <p data-navigator-status>Navigator has not started.</p>
+      <p class="navigator-session" data-navigator-session-label hidden>Session <code data-navigator-session></code></p>
+      <ul class="navigator-reasons" data-navigator-reasons hidden></ul>
+      <div class="navigator-manifest" data-navigator-manifest hidden></div>
+      <div class="control-row navigator-controls"><button class="button compact primary" type="button" data-navigator-continue data-confirm="Continue the human-approved Navigator step for this exact application?" hidden>Continue</button><button class="button compact ghost" type="button" data-navigator-cancel data-confirm="Cancel this exact Navigator session without submitting?" hidden>Cancel</button></div>
+    </div>
+  </div>
+</article>{% endfor %}</div>{% else %}<div class="empty success-empty"><span>✓</span><h4>No human blockers</h4><p>The queue contains no unresolved sensitive, assessment, CAPTCHA, blocked, or unverified-submission steps.</p></div>{% endif %}</section>
+
+<div id="handoff-result" class="notice handoff-toast" role="status" aria-live="polite">
+  <div>⌁</div><div><b>Navigator</b><p id="handoff-text">—</p></div>
+</div>
+
+<script src="/static/js/needs_you.js" defer></script>
+{% endblock %}

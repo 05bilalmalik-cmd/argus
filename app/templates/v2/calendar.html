@@ -1,0 +1,45 @@
+{% extends "v2/base.html" %}
+{% macro event_row(item) -%}
+<a class="dense-row" href="/pipeline/{{ item.row.id }}">
+  <span class="status-dot state-{{ item.row.window_state|lower|replace('_','-') }}" aria-hidden="true"></span>
+  <span class="event-kind">{{ item.kind }}</span>
+  <span class="row-copy"><strong>{{ item.row.employer }}</strong><small>{{ item.row.role }} · {{ item.row.window_label }}</small></span>
+  <time title="{{ item.date.isoformat() }}">{{ item.row.opening_relative if item.kind == 'Opens' else item.row.closing_relative }}</time>
+</a>
+{%- endmacro %}
+{% block content %}
+<div class="section-intro"><div><span class="micro-label">APPLICATION CYCLE</span><h2>What happens next</h2><p>Dates are stored and compared in UTC, then rendered in Europe/London. No date is inferred.</p></div><span>{{ dated_count }} dated</span></div>
+
+<nav class="view-tabs" aria-label="Calendar views">
+  {% for key, label in [('agenda','Agenda'),('month','Month'),('opens','Opens soon'),('closing','Closing soon')] %}<a href="{{ view_urls[key] }}"{% if view == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+</nav>
+
+<form class="quiet-filters" action="/calendar" method="get">
+  <input type="hidden" name="view" value="{{ view }}">
+  <label>Search<input name="q" value="{{ query }}" type="search" placeholder="Employer or role"></label>
+  <label>Programme<select name="programme"><option value="">All programmes</option>{% for option in programme_options %}<option value="{{ option }}"{% if programme == option %} selected{% endif %}>{{ option|replace('_',' ')|title }}</option>{% endfor %}</select></label>
+  <label>Employer<select name="employer"><option value="">All employers</option>{% for option in employer_options %}<option value="{{ option }}"{% if employer == option %} selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+  <label>Window<select name="window_state"><option value="">All states</option>{% for option in ['OPEN','NOT_YET_OPEN','CLOSED','UNKNOWN'] %}<option value="{{ option }}"{% if window_state == option %} selected{% endif %}>{{ option|replace('_',' ')|title }}</option>{% endfor %}</select></label>
+  <label>Candidate status<select name="user_status"><option value="">All candidate statuses</option>{% for option in user_status_options %}<option value="{{ option }}"{% if user_status == option %} selected{% endif %}>{{ option|replace('_',' ')|title }}</option>{% endfor %}</select></label>
+  <button type="submit">Apply</button><a href="/calendar">Clear</a>
+</form>
+
+<div class="cycle-counts" aria-label="Filtered window-state counts">{% for state, count in state_counts.items() %}<a href="{{ state_urls[state] }}"><b>{{ count }}</b> {{ state|replace('_',' ')|lower }}</a>{% endfor %}</div>
+
+{% if view == 'month' %}
+<section class="month-view" data-selected-day="{{ selected_day.isoformat() }}"><div class="section-title"><div><h3>{{ month_label }}</h3><time>{{ selected_day.strftime('%d %B %Y') }}</time></div><div class="month-controls"><a href="{{ previous_month_url }}" aria-label="Previous month">← Previous</a><a href="{{ next_month_url }}" aria-label="Next month">Next →</a></div></div>
+  <div class="month-weekdays" aria-hidden="true">{% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<span>{{ day }}</span>{% endfor %}</div>
+  <div class="month-grid">{% for week in month_weeks %}{% for cell in week %}<a href="{{ cell.url }}" class="month-day{% if not cell.current_month %} outside{% endif %}{% if cell.date == selected_day %} selected{% endif %}"{% if cell.date == selected_day %} aria-current="date"{% endif %}><span>{{ cell.day }}</span>{% for item in cell.events[:3] %}<small><i class="status-dot state-{{ item.row.window_state|lower|replace('_','-') }}"></i>{{ item.kind }} · {{ item.row.employer }}</small>{% endfor %}</a>{% endfor %}{% endfor %}</div>
+  <div class="day-agenda"><span class="micro-label">SELECTED DAY</span>{% for item in selected_day_rows %}{{ event_row(item) }}{% else %}<p class="empty-copy">No captured opening or closing event falls on this day.</p>{% endfor %}</div>
+</section>
+{% else %}
+<section class="agenda-view"><div class="section-title"><div><span class="micro-label">{{ view|upper }}</span><h3>{% if view == 'opens' %}Expected openings{% elif view == 'closing' %}Open roles by deadline{% else %}Chronological agenda{% endif %}</h3></div><span>{{ events|length }}</span></div>
+  {% for item in events %}{{ event_row(item) }}{% else %}<p class="empty-copy">No evidenced dates match this view. Use the no-date lane below to review missing source evidence.</p>{% endfor %}
+</section>
+{% endif %}
+
+<section class="undated-lane"><div class="section-title"><div><span class="micro-label">HONEST INVENTORY</span><h3>No date captured</h3><p>{{ undated_count }} roles without captured dates. Every row remains reachable; none is inferred or hidden.</p></div><span>{{ undated_count }}</span></div>
+  {% for row in undated %}<a class="dense-row" href="/pipeline/{{ row.id }}"><span class="status-dot neutral" aria-hidden="true"></span><span class="row-copy"><strong>{{ row.employer }}</strong><small>{{ row.role }} · {{ row.window_label }}</small></span><time title="No date captured">—</time></a>{% else %}<p class="empty-copy">Every role in the current filter has at least one captured date.</p>{% endfor %}
+  {% if undated_pagination.total_pages > 1 %}<nav class="pager" aria-label="Undated roles pages">{% if undated_pagination.has_previous %}<a href="{{ undated_pagination.previous_url }}">Previous</a>{% endif %}<span>Page {{ undated_pagination.page }} of {{ undated_pagination.total_pages }}</span>{% if undated_pagination.has_next %}<a href="{{ undated_pagination.next_url }}">Next</a>{% endif %}</nav>{% endif %}
+</section>
+{% endblock %}

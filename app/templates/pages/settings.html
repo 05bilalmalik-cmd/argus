@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="settings-grid">
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <span class="kicker">EXECUTION POLICY</span>
+        <h3>Submission guardrails</h3>
+      </div>
+      <span class="status-chip {% if live_submit %}bad{% else %}good{% endif %}">
+        {% if live_submit %}LIVE ENABLED{% else %}SAFE DEFAULT{% endif %}
+      </span>
+    </div>
+    <dl class="settings-list">
+      <div>
+        <dt>Bind address</dt>
+        <dd><code>{{ settings.host }}:{{ settings.port }}</code><small>Local machine only by default</small></dd>
+      </div>
+      <div>
+        <dt>Live submission</dt>
+        <dd><b>{{ 'ENABLED' if settings.live_submit_enabled else 'DISABLED' }}</b><small>Requires Risk 0 and explicit domain allowlist</small></dd>
+      </div>
+      <div>
+        <dt>Allowed domains</dt>
+        <dd>
+          {% if allowlist %}
+            {% for domain in allowlist %}<span class="tag">{{ domain }}</span>{% endfor %}
+          {% else %}
+            <em>None</em>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Browser</dt>
+        <dd><b>{{ 'HEADLESS' if settings.browser_headless else 'HEADED' }}</b><small>Every run records trace and screenshot evidence</small></dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <span class="kicker">LOCAL STORAGE</span>
+        <h3>Private runtime paths</h3>
+      </div>
+    </div>
+    <dl class="settings-list">
+      <div><dt>Data directory</dt><dd><code>{{ settings.data_dir }}</code></dd></div>
+      <div><dt>Database</dt><dd><code>{{ settings.database_url|replace('sqlite:///','') }}</code></dd></div>
+      <div><dt>Documents</dt><dd><code>{{ settings.documents_dir }}</code></dd></div>
+      <div><dt>Artifacts</dt><dd><code>{{ settings.artifacts_dir }}</code></dd></div>
+      <div><dt>Capture token</dt><dd><code>{{ settings.api_token_path }}</code><small>Use <code>argus token</code> to copy it into the extension</small></dd></div>
+    </dl>
+  </section>
+
+  <section class="panel span-2">
+    <div class="section-heading">
+      <div>
+        <span class="kicker">CONFLICT FIREWALL</span>
+        <h3>Employer application rules</h3>
+        <p class="section-copy">Encode public one-application limits and mutually exclusive divisions before ARGUS evaluates the queue.</p>
+      </div>
+      <span class="count">{{ conflict_rules|length }}</span>
+    </div>
+
+    <div class="rule-layout">
+      <div>
+        {% if conflict_rules %}
+          <div class="rule-list">
+            {% for rule in conflict_rules %}
+              <article class="rule-card">
+                <div class="rule-card-head">
+                  <div>
+                    <span class="mono">{{ rule.cycle }}</span>
+                    <h4>{{ rule.employer_pattern }}</h4>
+                  </div>
+                  <button
+                    class="button tiny danger-outline"
+                    type="button"
+                    data-action="/api/conflict-rules/{{ rule.id }}"
+                    data-method="DELETE"
+                    data-confirm="Delete this employer application rule?"
+                  >Delete</button>
+                </div>
+                <div class="rule-facts">
+                  <div>
+                    <small>MAXIMUM APPLICATIONS</small>
+                    <b>{{ rule.max_applications if rule.max_applications is not none else 'Not capped' }}</b>
+                  </div>
+                  <div>
+                    <small>EXCLUSIVE GROUPS</small>
+                    {% if rule.exclusive_groups %}
+                      {% for group in rule.exclusive_groups %}
+                        <div class="tag-row compact-tags">
+                          {% for name in group %}<span class="tag">{{ name|replace('_', ' ') }}</span>{% endfor %}
+                        </div>
+                      {% endfor %}
+                    {% else %}
+                      <em>None configured</em>
+                    {% endif %}
+                  </div>
+                </div>
+                {% if rule.notes %}<p>{{ rule.notes }}</p>{% endif %}
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="empty compact-empty">
+            <span>⊘</span>
+            <h4>No employer rules configured</h4>
+            <p>Add only restrictions supported by the employer's published recruitment guidance.</p>
+          </div>
+        {% endif %}
+      </div>
+
+      <form class="form-grid rule-form" data-api-form action="/api/conflict-rules" method="POST" data-refresh="true" data-confirm-form="Store this conflict rule? It will block matching applications until reviewed.">
+        <div>
+          <span class="kicker">NEW RULE</span>
+          <h4>Add a verified restriction</h4>
+          <p>Wildcards are supported in employer names. Separate mutually exclusive divisions with commas and groups with semicolons.</p>
+        </div>
+        <label>Employer pattern<input name="employer_pattern" required maxlength="240" placeholder="Example Bank*"></label>
+        <div class="split">
+          <label>Application cycle<input name="cycle" required maxlength="40" value="2027"></label>
+          <label>Maximum applications<input name="max_applications" type="number" min="1" max="100" placeholder="1"></label>
+        </div>
+        <label>Exclusive groups<input name="exclusive_groups" maxlength="4000" placeholder="ibd,markets; credit,real_assets"></label>
+        <label>Evidence / notes<textarea name="notes" maxlength="4000" rows="3" placeholder="Source and wording of the public recruitment rule"></textarea></label>
+        <button class="button primary full" type="submit">Store employer rule</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel span-2 danger-zone">
+    <div>
+      <span class="kicker">LIVE MODE</span>
+      <h3>Configuration belongs outside the dashboard</h3>
+      <p>ARGUS deliberately does not expose a web switch for live submission. Set environment variables before launch, restart, and allowlist exact hostnames. This prevents an accidental click from changing the execution boundary.</p>
+    </div>
+    <pre>ARGUS_ENABLE_LIVE_SUBMIT=true
+ARGUS_LIVE_DOMAIN_ALLOWLIST=jobs.example.com</pre>
+  </section>
+</div>
+{% endblock %}

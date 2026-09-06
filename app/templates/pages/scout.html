@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-grid two-one">
+  <div class="stack">
+    <div class="panel">
+      <div class="section-heading">
+        <div>
+          <span class="kicker">SCOUT</span>
+          <h3>Autopilot Control</h3>
+        </div>
+        <div class="control-row">
+          {% if trackr_live_enabled %}
+           <button class="button primary" data-scout-action="scrape-live" data-confirm="Scrape live Trackr listings now? This remains disabled unless live Trackr access is explicitly enabled.">Scrape Trackr Now</button>
+          {% else %}
+          <button class="button primary" type="button" disabled aria-disabled="true" title="Set ARGUS_ENABLE_TRACKR_LIVE=true to opt in">Scrape Trackr Now (disabled)</button>
+          {% endif %}
+           <button class="button" data-scout-action="autopilot" data-runs="10" data-confirm="Run review-only autopilot for up to 10 applications? No batch submission is permitted.">Run Autopilot (10)</button>
+           <button class="button ghost" data-scout-action="autopilot" data-runs="50" data-confirm="Run review-only autopilot for up to 50 applications? No batch submission is permitted.">Run Autopilot (50)</button>
+        </div>
+      </div>
+      {% if trackr_live_enabled %}
+      <p class="section-copy">
+        Scrape pulls every live Trackr listing (Year in Industry first, then Spring Weeks, then
+        Summer only for firms with no Yii open). Autopilot drives eligible applications through
+        fill → review, then stops for exact per-application confirmation before any guarded submit;
+        CAPTCHAs and declarations land in <b>Needs You</b>.
+      </p>
+      {% else %}
+      <p id="trackr-live-status" class="section-copy">
+        <b>Live Trackr scraping is disabled.</b> Set <code>ARGUS_ENABLE_TRACKR_LIVE=true</code>
+        to opt in. Saved Trackr HTML imports and local folder scans remain available.
+        Autopilot continues to use already imported opportunities.
+      </p>
+      {% endif %}
+      <div id="scout-result" class="notice scout-result" role="status" aria-live="polite" aria-hidden="true">
+        <div aria-hidden="true">⌁</div><div><b>Result</b><p id="scout-result-text">—</p></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="section-heading">
+        <div><span class="kicker">NEEDS YOU</span><h3>Finish Manually ({{ needs_user|length }})</h3></div>
+      </div>
+      {% if needs_user %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Firm</th><th scope="col">Role</th><th scope="col">Why</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead>
+          <tbody>
+          {% for application, opportunity in needs_user %}
+          <tr>
+            <td><b>{{ opportunity.employer }}</b><small>{{ opportunity.programme_group }}</small></td>
+            <td>{{ opportunity.role_title[:60] }}</td>
+            <td><code class="scout-code">{{ application.next_action[:70] }}</code></td>
+            <td><a class="button tiny ghost" href="/applications/{{ application.id }}">Inspect</a></td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty mini"><span>✓</span><h4>Nothing waiting</h4><p>Autopilot has everything under control.</p></div>
+      {% endif %}
+    </div>
+
+    <div class="panel">
+      <div class="section-heading">
+        <div><span class="kicker">BLOCKED</span><h3>Blocked by Guardrails ({{ blocked|length }})</h3></div>
+      </div>
+      {% if blocked %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Firm</th><th scope="col">Role</th><th scope="col">Next action</th></tr></thead>
+          <tbody>
+          {% for application, opportunity in blocked %}
+          <tr>
+            <td><b>{{ opportunity.employer }}</b></td>
+            <td>{{ opportunity.role_title[:60] }}</td>
+            <td><code class="scout-code">{{ application.next_action[:70] }}</code></td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty mini"><span>✓</span><h4>No blocks</h4><p>All clear.</p></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="stack sticky">
+    <div class="panel">
+      <div class="section-heading"><div><span class="kicker">TRACKER MIX</span><h3>Programmes Tracked</h3></div></div>
+      <dl class="posture-list">
+        {% for group, count in mix.items() %}
+        <div><dt>{{ group.replace('_', ' ') }}</dt><dd>{{ count }}</dd></div>
+        {% endfor %}
+        <div><dt>Pending application link</dt><dd>{{ pending_count }}</dd></div>
+      </dl>
+    </div>
+    <div class="panel">
+      <div class="section-heading"><div><span class="kicker">POSTURE</span><h3>Live Domains</h3></div></div>
+      <dl class="settings-list">
+        {% for domain in allowlist %}
+        <div><dt>allowed</dt><dd><code>{{ domain }}</code> <small>+ subdomains</small></dd></div>
+        {% endfor %}
+      </dl>
+    </div>
+  </div>
+</section>
+
+<script src="/static/js/scout.js" defer></script>
+{% endblock %}

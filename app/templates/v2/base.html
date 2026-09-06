@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-ui-version="2">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>{{ title }} · ARGUS</title>
+  <link rel="stylesheet" href="/static/css/argus-v2.css">
+  <script src="/static/js/argus-v2.js" defer></script>
+  {% if legacy_workflow_js %}<script src="/static/js/argus.js" defer></script>{% endif %}
+</head>
+<body data-active-section="{{ active }}"{% if legacy_workflow_js %} data-legacy-workflows{% endif %}>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <aside class="sidebar-v2" data-sidebar>
+    <div class="sidebar-tabs" aria-label="Sidebar mode"><span aria-current="page">SECTIONS</span><span>SEARCH</span></div>
+    <a class="brand-v2" href="/" aria-label="ARGUS Today">ARGUS</a>
+    <form class="global-search" action="/pipeline" method="get" role="search">
+      <label class="sr-only" for="global-search">Search employer and role</label>
+      <span aria-hidden="true">⌕</span>
+      <input id="global-search" data-global-search name="q" type="search" value="{{ global_query }}" placeholder="Search employer or role" autocomplete="off">
+      <kbd>/</kbd>
+    </form>
+    <nav class="primary-nav" id="primary-navigation" aria-label="Primary navigation">
+      {% set nav = [
+        ('today','/','Today','t'),('calendar','/calendar','Calendar','c'),
+        ('pipeline','/pipeline','Pipeline','p'),('needs-you','/needs-you','Needs You','n'),
+        ('library','/library','Library','l'),('activity','/activity','Activity','a'),
+        ('control','/control','Control','o')
+      ] %}
+      {% for key, href, label, shortcut in nav %}
+      <a href="{{ href }}" data-jump-key="{{ shortcut }}"{% if active == key %} class="active" aria-current="page"{% endif %}>
+        <span class="nav-glyph" aria-hidden="true">{{ shortcut|upper }}</span>
+        <span class="nav-label">{{ label }}</span>
+        {% if key == 'needs-you' and needs_count %}<span class="nav-count" aria-label="{{ needs_count }} items">{{ needs_count }}</span>{% endif %}
+      </a>
+      {% endfor %}
+    </nav>
+    <div class="sidebar-meta">
+      <button class="text-button" type="button" data-theme-toggle>Light theme</button>
+      <button class="text-button" type="button" data-shortcuts-open>Keyboard shortcuts <kbd>?</kbd></button>
+    </div>
+  </aside>
+
+  <main class="main-v2" id="main-content">
+    <header class="topline">
+      <button class="menu-toggle" type="button" data-menu-toggle aria-controls="primary-navigation" aria-expanded="false"><span class="sr-only">Open navigation</span><span aria-hidden="true">☰</span></button>
+      <div><span class="micro-label">MONOLITH RESEARCH / ARGUS</span><h1>{{ title }}</h1></div>
+      <span class="timezone">{{ local_timezone }}</span>
+    </header>
+    <div class="page-v2">{% block content %}{% endblock %}</div>
+  </main>
+
+  <footer class="mode-strip" role="status" aria-live="polite" data-mode-status>
+    <span class="status-dot {% if mode_posture.submission_possible %}amber{% elif mode_posture.mode == 'OFF' %}neutral{% else %}green{% endif %}" aria-hidden="true"></span>
+    <span>{{ mode_posture.sentence }}</span>
+    <a href="/control">Change in Control</a>
+  </footer>
+
+  <dialog class="shortcut-dialog" data-shortcuts aria-labelledby="shortcut-title">
+    <form method="dialog"><button class="dialog-close" value="close" aria-label="Close shortcuts">×</button></form>
+    <span class="micro-label">KEYBOARD</span><h2 id="shortcut-title">Move without reaching</h2>
+    <dl class="shortcut-list">
+      <div><dt><kbd>/</kbd></dt><dd>Focus employer and role search</dd></div>
+      <div><dt><kbd>g</kbd> then <kbd>t</kbd>–<kbd>o</kbd></dt><dd>Jump to a primary section</dd></div>
+      <div><dt><kbd>?</kbd></dt><dd>Open this shortcut guide</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Close a dialog or mobile navigation</dd></div>
+    </dl>
+  </dialog>
+  <div class="toast-region" data-toasts aria-live="polite"></div>
+</body>
+</html>

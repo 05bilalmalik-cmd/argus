@@ -1,0 +1,7 @@
+<div class="agenda-list">{% for event in events %}<article>
+  <time datetime="{{ event.date.isoformat() }}"><b>{{ event.date.strftime('%d') }}</b><span>{{ event.date.strftime('%b')|upper }}</span><small>{{ event.date.strftime('%a')|upper }}</small></time>
+  <div><p class="micro-label">{{ event.kind_label }}</p><h4>{{ event.employer }} · {{ event.role }}</h4><p>{{ event.programme_group or 'Programme tier not classified' }}{% if event.location %} · {{ event.location }}{% endif %}</p></div>
+  <span class="state-label state-{{ event.window_state|lower|replace('_','-') }}">{{ event.window_label }}</span>
+  <a href="/pipeline?role={{ event.id }}" aria-label="View {{ event.employer }} {{ event.role }} in pipeline">View →</a>
+</article>{% endfor %}</div>
+

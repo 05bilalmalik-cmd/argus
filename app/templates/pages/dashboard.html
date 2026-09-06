@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="hero-grid">
+  <section class="hero-panel">
+    <div><span class="kicker">AUTONOMY WITH EVIDENCE</span><h2>Your applications,<br><em>under control.</em></h2></div>
+    <p>ARGUS discovers, verifies, prepares and executes. It stops wherever judgement, legal consent or an assessment begins.</p>
+    <div class="hero-actions"><a class="button primary" href="/opportunities">Add opportunity</a><a class="button ghost" href="/lab">Run safety lab</a></div>
+    <div class="radar" aria-hidden="true"><span></span><span></span><span></span><b></b></div>
+  </section>
+  <section class="mission-panel">
+    <div class="section-heading"><div><span class="kicker">MISSION STATUS</span><h3>System posture</h3></div><span class="status-chip good">READY</span></div>
+    <dl class="posture-list">
+      <div><dt>Submission mode</dt><dd>{% if live_submit %}Live / allowlisted{% else %}Dry-run only{% endif %}</dd></div>
+      <div><dt>Human gates</dt><dd>Legal · Sensitive · OA</dd></div>
+      <div><dt>Evidence chain</dt><dd>Hash-linked audit</dd></div>
+      <div><dt>Storage</dt><dd>Local protected vault</dd></div>
+    </dl>
+  </section>
+</div>
+
+<div class="metric-grid">
+  <article class="metric"><span>OPPORTUNITIES</span><strong>{{ snapshot.total_opportunities }}</strong><small>discovered roles</small></article>
+  <article class="metric"><span>ACTIVE FILES</span><strong>{{ snapshot.total_applications }}</strong><small>application records</small></article>
+  <article class="metric warning"><span>NEEDS YOU</span><strong>{{ snapshot.needs_user }}</strong><small>human decisions</small></article>
+  <article class="metric violet"><span>OA PENDING</span><strong>{{ snapshot.oa_pending }}</strong><small>assessments</small></article>
+  <article class="metric success"><span>VERIFIED</span><strong>{{ snapshot.submitted }}</strong><small>receipts captured</small></article>
+</div>
+
+<div class="dashboard-grid">
+  <section class="panel span-2">
+    <div class="section-heading"><div><span class="kicker">PIPELINE</span><h3>Application control queue</h3></div><a href="/applications">View all →</a></div>
+    {% if applications %}
+    <div class="table-wrap pipeline-table"><table><thead><tr><th scope="col">Target</th><th scope="col">State</th><th scope="col">Risk</th><th scope="col">Next action</th></tr></thead><tbody>
+      {% for item in applications %}{% set risk_assessed = item.risk_is_assessed if item.risk_is_assessed is defined else true %}{% set risk_value = item.effective_risk_level if item.effective_risk_level is defined else item.risk_level %}<tr><td><b>{{ item.opportunity.employer }}</b><small>{{ item.opportunity.role_title }}</small></td><td><span class="state state-{{ item.state|lower|replace('_','-') }}">{{ item.state|replace('_',' ') }}</span></td><td><span class="risk {% if not risk_assessed %}risk-unassessed{% else %}risk-{{ risk_value }}{% endif %}">{{ 'UNASSESSED' if not risk_assessed else 'R' ~ risk_value }}</span></td><td>{{ item.next_action or '—' }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% else %}<div class="empty"><span>◇</span><h4>No applications yet</h4><p>Import a CSV or add a role manually to begin.</p><a class="button compact" href="/opportunities">Open opportunity inbox</a></div>{% endif %}
+  </section>
+  <section class="panel">
+    <div class="section-heading"><div><span class="kicker">RECENT RUNS</span><h3>Automation evidence</h3></div></div>
+    {% if runs %}<div class="run-list">{% for run in runs %}{% set run_assessed = run.risk_is_assessed if run.risk_is_assessed is defined else true %}{% set run_risk = run.effective_risk_level if run.effective_risk_level is defined else run.risk_level %}<div class="run-item"><span class="run-dot {% if run.error %}bad{% else %}good{% endif %}" aria-hidden="true"></span><div><b>{{ run.adapter|upper }} · {{ run.mode }}</b><small>{{ run.state|replace('_',' ') }}</small></div><span class="{% if not run_assessed %}risk-unassessed{% endif %}">{{ 'UNASSESSED' if not run_assessed else 'R' ~ run_risk }}</span></div>{% endfor %}</div>
+    {% else %}<div class="empty mini"><span>⌁</span><p>No browser runs recorded.</p></div>{% endif %}
+  </section>
+</div>
+{% endblock %}

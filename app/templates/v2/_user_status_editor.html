@@ -1,0 +1,11 @@
+{% macro user_status_editor(opportunity_id, current_status, options, exclusion_reason=None, compact=False) -%}
+<div class="user-status-editor{% if compact %} compact{% endif %}" data-user-status-editor data-opportunity-id="{{ opportunity_id }}">
+  <label>
+    <span class="{% if compact %}sr-only{% else %}micro-label{% endif %}">Candidate status</span>
+    <select data-user-status-select data-opportunity-id="{{ opportunity_id }}" aria-label="Candidate status for opportunity {{ opportunity_id }}">
+      {% for option in options %}<option value="{{ option }}"{% if current_status == option %} selected{% endif %}>{{ option|replace('_',' ')|title }}</option>{% endfor %}
+    </select>
+  </label>
+  <small data-user-status-reason{% if not exclusion_reason %} hidden{% endif %}>{{ exclusion_reason or '' }}</small>
+</div>
+{%- endmacro %}

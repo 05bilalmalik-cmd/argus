@@ -1,0 +1,76 @@
+{% extends "v2/base.html" %}
+{% from "v2/_user_status_editor.html" import user_status_editor %}
+{% block content %}
+<section class="page-intro split-intro">
+  <div><p class="micro-label">APPLICATION / {{ application.id }}</p><h2>{{ opportunity.employer }} · {{ opportunity.role_title }}</h2><p>{{ opportunity.location or 'Location not captured' }} · {{ opportunity.programme_group or 'Programme tier not classified' }}</p></div>
+  <a class="secondary-action" href="/pipeline?role={{ opportunity.id }}">Back to pipeline</a>
+</section>
+<section class="metric-strip compact"><div><span class="micro-label">APPLICATION</span><strong class="text-metric">{{ application.state|replace('_',' ') }}</strong><small>current state</small></div><div><span class="micro-label">TARGET</span><strong class="text-metric">{{ target.label }}</strong><small>{{ target.provider }}</small></div><div><span class="micro-label">PRIORITY</span><strong>{{ application.priority }}</strong><small>local score</small></div></section>
+<section class="rule-section status-control-section"><div class="section-head"><div><p class="micro-label">CANDIDATE-OWNED STATUS</p><h3>Application process</h3><p>This status is separate from machine workflow state and controls automation eligibility.</p></div></div>{{ user_status_editor(opportunity.id, user_status, user_status_options, automation_exclusion_reason) }}</section>
+<div class="two-column-flow">
+  <section class="rule-section"><div class="section-head"><div><p class="micro-label">NEXT ACTION</p><h3>What happens next</h3></div></div>
+    <p>{{ application.next_action or 'Review the evidence and choose a safe next step.' }}</p>
+    <div class="action-line">
+      {% if safe_actions.can_queue %}<button class="primary-action" type="button" data-action="/api/applications/{{ application.id }}/queue" data-method="POST" data-confirm="Queue this exact application for review?">Queue for review</button>{% endif %}
+      {% if safe_actions.can_prepare %}<button type="button" data-action="/api/applications/{{ application.id }}/prepare" data-method="POST" data-confirm="Prepare the exact reviewed package for this application?">Prepare package</button>{% endif %}
+      {% if safe_actions.can_dry_run %}<button type="button" data-action="/api/applications/{{ application.id }}/run?mode=dry-run" data-method="POST" data-confirm="Run a dry-run for this exact application?">Run dry-run</button>{% endif %}
+      {% if safe_actions.can_resolve_target %}<button type="button" data-action="/api/applications/{{ application.id }}/resolve-target" data-method="POST" data-confirm="Open the visible Navigator to verify this exact target? No submission will be made.">Resolve application target</button>{% endif %}
+      {% if prefill_start_allowed %}<button class="primary-action" type="button" data-prefill-start data-application-id="{{ application.id }}" data-confirm="Prepare this exact application in the visible browser? ARGUS will stop before Submit.">Prepare this application</button>{% endif %}
+    </div>
+    <p data-prefill-status>{% if prefill_wall %}{{ prefill_wall }}{% endif %}</p>
+    {% if safe_actions.is_needs_oa %}<p>Assessment-stage applications cannot resume automation. Record the assessment outcome before re-queueing.</p>{% endif %}
+    {% if application.state == 'SUBMISSION_UNKNOWN' %}<p>Submission outcome is unknown. Reconcile the employer record first; do not retry.</p>{% endif %}
+  </section>
+  <section class="rule-section"><div class="section-head"><div><p class="micro-label">BLOCKERS</p><h3>Recorded evidence gaps</h3></div></div>{% if blockers %}<ul class="plain-list">{% for blocker in blockers %}<li>{{ blocker }}</li>{% endfor %}</ul>{% else %}<div class="empty-state compact-empty"><h4>No recorded blocker.</h4><p>Continue only through a control shown for the current application state.</p></div>{% endif %}</section>
+</div>
+<section class="rule-section"><div class="section-head"><div><p class="micro-label">VISIBLE NAVIGATOR</p><h3>Bound browser session</h3><p>A matching local session may resume here. The page never accepts a caller-supplied destination.</p></div>
+  {% if target.navigator_allowed %}<button class="secondary-action" type="button" data-navigator-start data-application-id="{{ application.id }}" data-employer="{{ opportunity.employer }}" data-role="{{ opportunity.role_title }}" data-provider="{{ target.provider }}" data-navigator-verified="true" data-confirm="Open this exact application in the visible Navigator? ARGUS will stop before submission for final review.">Open reviewed session</button>{% endif %}
+</div>
+<div class="navigator-panel" data-navigator-panel data-application-id="{{ application.id }}" data-application-state="{{ application.state }}" data-employer="{{ opportunity.employer }}" data-role="{{ opportunity.role_title }}" data-provider="{{ target.provider }}"{% if active_navigator_session %} data-session-id="{{ active_navigator_session.session_id }}"{% else %} hidden{% endif %}>
+  <div class="navigator-heading"><span class="micro-label">LOCAL SESSION</span><span data-navigator-state>{% if active_navigator_session %}{{ active_navigator_session.state.value|replace('_',' ') }}{% else %}OPENING{% endif %}</span></div>
+  <p data-navigator-status>{% if active_navigator_session %}{{ active_navigator_session.reason or 'A live visible Navigator session is ready.' }}{% else %}Navigator has not started.{% endif %}</p>
+  <p data-prefill-status>{% if prefill_wall %}{{ prefill_wall }}{% endif %}</p>
+  <p data-navigator-session-label{% if not active_navigator_session %} hidden{% endif %}>Session <code data-navigator-session>{% if active_navigator_session %}{{ active_navigator_session.session_id }}{% endif %}</code></p>
+  <ul data-navigator-reasons hidden></ul><div data-navigator-manifest hidden></div>
+  <div class="dialog-actions navigator-controls">
+    {% if prefill_continue_allowed %}<button class="secondary-action" type="button" data-navigator-continue data-session-id="{{ active_navigator_session.session_id }}" data-confirm="Continue this exact human-approved Navigator step?">Continue</button><button class="secondary-action" type="button" data-navigator-cancel data-session-id="{{ active_navigator_session.session_id }}" data-confirm="Cancel this exact Navigator session without submitting?">Cancel</button>{% endif %}
+  </div>
+  {% if active_navigator_session or prefill_wall %}<div class="handoff-checklist" data-human-boundary="human-review">
+    <p><strong>Employer / role:</strong> {{ opportunity.employer }} · {{ opportunity.role_title }}</p>
+    <p><strong>CAPTCHA:</strong> Complete any visible CAPTCHA yourself.</p>
+    <p><strong>Blank fields and reasons:</strong>{% if handoff.blank_field_reasons %}</p><ul class="handoff-reasons" aria-label="Blank field reasons">{% for item in handoff.blank_field_reasons %}<li><span>{{ item.label }}</span><small>{{ item.reason }}</small><code>{{ item.reason_code }}</code></li>{% endfor %}</ul>{% else %} review the open form and complete any blank field yourself.</p>{% endif %}
+    <p>{{ human_boundary_copy }}</p>
+  </div>{% endif %}
+</div>
+<div class="action-line"><a href="{{ opportunity.url }}" target="_blank" rel="noopener noreferrer">Open source evidence</a></div>
+  <div class="target-url-panel" style="margin-top: 0.5rem;">
+    <p><strong>ARGUS target URL:</strong>
+    {% if opportunity.application_url %}
+      <span class="provenance-badge">{% if opportunity.application_url_provenance == 'OPERATOR_SUPPLIED' %}operator-supplied{% else %}resolver-supplied{% endif %}</span>
+    {% endif %}
+    </p>
+    {% if opportunity.application_url %}
+    <p style="word-break: break-all;"><a href="{{ opportunity.application_url }}" target="_blank" rel="noopener noreferrer">{{ opportunity.application_url }}</a></p>
+    {% else %}
+    <p class="empty-copy">No application URL has been resolved yet.</p>
+    {% endif %}
+    <div style="margin-top: 0.5rem;">
+      <button class="secondary-action" type="button" data-fix-link-toggle data-application-id="{{ application.id }}">Wrong link — let me fix it</button>
+      <div data-fix-link-form hidden style="margin-top: 0.5rem;">
+        <div class="fix-link-row">
+          <input type="url" data-fix-link-input placeholder="Paste the correct application URL here" style="flex: 1; min-width: 200px;">
+          <button class="primary-action" type="button" data-fix-link-submit data-application-id="{{ application.id }}">Save link for verification</button>
+          <button class="text-button" type="button" data-fix-link-cancel>Cancel</button>
+        </div>
+        <p data-fix-link-status role="status"></p>
+        <p data-fix-link-result role="alert"></p>
+      </div>
+    </div>
+  </div>
+</section>
+<div class="two-column-flow"><section class="rule-section"><div class="section-head"><div><p class="micro-label">ELIGIBILITY</p><h3>Recorded evidence</h3></div></div><pre>{{ eligibility }}</pre></section><section class="rule-section"><div class="section-head"><div><p class="micro-label">CONFLICTS</p><h3>Employer rules</h3></div></div><pre>{{ conflict }}</pre></section></div>
+<section class="rule-section"><div class="section-head"><div><p class="micro-label">LOCAL EGRESS DISCLOSURE</p><h3>First-party requests blocked locally</h3><p>Candidate-data markers describe what a provider request would have carried. Delivery remained blocked.</p></div><span>{{ first_party_requests|length }}</span></div>{% if first_party_requests %}<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Host and path</th><th>Request</th><th>Candidate-data marker</th></tr></thead><tbody>{% for item in first_party_requests %}<tr><td><strong>{{ item.host }}</strong><br><code>{{ item.path }}</code></td><td>{{ item.method }} · Resource type: {{ item.resource_type }}</td><td>Candidate data: {{ 'yes' if item.carries_candidate_data else 'no' }}<br>Kind: {{ item.candidate_data_kind or 'none' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="empty-copy">No permitted first-party request evidence is attached to this application.</p>{% endif %}</section>
+<section class="rule-section"><div class="section-head"><div><p class="micro-label">ARTIFACTS</p><h3>Exact documents and outputs</h3></div><span>{{ artifacts|length }}</span></div>{% for artifact in artifacts %}<div class="library-row"><span class="status-dot {% if artifact.approved is sameas true %}green{% else %}neutral{% endif %}"></span><div><strong>{{ artifact.label }} · {{ artifact.name }}</strong><p>{{ artifact.path }}</p></div><span>{% if artifact.approved is sameas true %}Approved{% elif artifact.approved is sameas false %}Not approved{% else %}Run evidence{% endif %}</span></div>{% else %}<p class="empty-copy">Prepare a reviewed package or dry-run to create exact evidence.</p>{% endfor %}</section>
+<section class="rule-section"><div class="section-head"><div><p class="micro-label">RUN HISTORY</p><h3>Automation evidence</h3></div></div>{% if runs %}<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Created</th><th>Mode</th><th>State</th><th>Adapter</th><th>Error</th></tr></thead><tbody>{% for run in runs %}<tr><td>{{ run.created_at.strftime('%d %b %Y %H:%M') }}</td><td>{{ run.mode }}</td><td>{{ run.state }}</td><td>{{ run.adapter }}</td><td>{{ run.error or '—' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state"><h4>No automation run exists for this application.</h4><p>Use only the state-appropriate control above; no run is started by viewing this page.</p></div>{% endif %}</section>
+<section class="rule-section"><div class="section-head"><div><p class="micro-label">AUDIT HISTORY</p><h3>Hash-chained changes</h3></div><span>{{ audits|length }}</span></div>{% for item in audits %}<div class="activity-row"><span>#{{ item.record.id }}</span><div><strong>{{ item.record.event_type }}</strong><small>{{ item.record.actor }} · {{ item.record.created_at }}</small></div><code>{{ item.record.event_hash[:12] }}…</code></div>{% else %}<p class="empty-copy">No application-specific audit event has been recorded yet.</p>{% endfor %}</section>
+{% endblock %}

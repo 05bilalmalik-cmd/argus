@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ARGUS Capture Settings</title><link rel="stylesheet" href="extension.css"></head>
+<body class="options">
+  <main class="shell">
+    <header class="brand"><span class="mark"><i></i><i></i><i></i></span><span><strong>ARGUS</strong><small>CAPTURE SETTINGS</small></span><span class="posture">LOCAL</span></header>
+    <section class="panel">
+      <h1>Connection settings</h1>
+      <p class="hint">The extension talks only to the local ARGUS service. Run <code>argus init</code> and copy the token stored in your ARGUS data directory.</p>
+      <form id="options-form">
+        <label>ARGUS base URL<input id="base-url" type="url" required placeholder="http://127.0.0.1:8787"></label>
+        <label>Capture token<input id="token" type="password" required autocomplete="off"></label>
+        <label>Default application cycle<input id="cycle" required maxlength="40"></label>
+        <div class="warning">Keep the token private. It authorises additions to your local opportunity inbox; it does not enable live applications.</div>
+        <button class="button" type="submit">Save connection</button>
+      </form>
+      <p class="message" id="message" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

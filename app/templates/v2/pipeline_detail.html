@@ -1,0 +1,11 @@
+{% extends "v2/base.html" %}
+{% from "v2/_user_status_editor.html" import user_status_editor %}
+{% block content %}
+<a class="back-link" href="/pipeline">← Pipeline</a>
+<section class="detail-hero"><span class="micro-label">ROLE EVIDENCE</span><h2>{{ row.employer }}</h2><p>{{ row.role }} · {{ row.division }} · {{ row.location }}</p></section>
+<div class="detail-columns">
+  <section><div class="section-title"><h3>Current state</h3></div><dl class="fact-list"><div><dt>Window</dt><dd><i class="status-dot state-{{ row.window_state|lower|replace('_','-') }}"></i>{{ row.window_label }}</dd></div><div><dt>Opening</dt><dd>{{ row.opening_date.isoformat() if row.opening_date else 'No date captured' }}</dd></div><div><dt>Closing</dt><dd>{{ row.closing_date.isoformat() if row.closing_date else 'No date captured' }}</dd></div><div><dt>Application</dt><dd>{{ row.application_state|replace('_',' ')|title }}</dd></div><div><dt>Target</dt><dd>{{ row.target.label }}</dd></div></dl>{{ user_status_editor(row.id, row.user_status, user_status_options, row.automation_exclusion_reason) }}</section>
+  <section><div class="section-title"><h3>Next action</h3></div><p>{{ row.next_action }}</p><div class="action-line"><a href="{{ row.source_url }}" target="_blank" rel="noopener noreferrer">Open source</a>{% if row.application_id %}<a href="/applications/{{ row.application_id }}">Application evidence</a>{% endif %}{% if not row.application_id and row.automation_eligible_by_user_status %}<button type="button" data-action="/api/opportunities/{{ row.id }}/evaluate" data-confirm="Evaluate this exact role and create its controlled application record?">Evaluate role</button>{% endif %}</div>{% if row.automation_exclusion_reason %}<p class="exclusion-copy">{{ row.automation_exclusion_reason }}</p>{% endif %}</section>
+</div>
+<p class="truth-note">A source link is not treated as a verified application form. Submission authority remains enforced by the server.</p>
+{% endblock %}

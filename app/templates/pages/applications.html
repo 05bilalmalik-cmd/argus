@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <div class="section-heading">
+    <div><span class="kicker">CONTROL QUEUE</span><h3>Applications</h3></div>
+    <div class="heading-meta"><span class="count">{{ total_count }} total</span><span class="review-marker">Last reviewed: {{ reviewed_label }}</span></div>
+  </div>
+
+  <form class="filter-bar" method="get" action="/applications" aria-label="Filter applications">
+    <label>Search<input name="q" value="{{ query }}" type="search" placeholder="Firm, role, division" autocomplete="off"></label>
+    <label>State<select name="state"><option value="">All states</option>{% for option in state_options %}<option value="{{ option }}"{% if state == option %} selected{% endif %}>{{ option|replace('_',' ') }}</option>{% endfor %}</select></label>
+    <label>Sort<select name="sort"><option value="priority"{% if sort == 'priority' %} selected{% endif %}>Priority</option><option value="updated_at"{% if sort == 'updated_at' %} selected{% endif %}>Recently updated</option><option value="created_at"{% if sort == 'created_at' %} selected{% endif %}>First seen</option><option value="employer"{% if sort == 'employer' %} selected{% endif %}>Employer</option><option value="state"{% if sort == 'state' %} selected{% endif %}>State</option><option value="risk_level"{% if sort == 'risk_level' %} selected{% endif %}>Risk</option></select></label>
+    <label>Order<select name="direction"><option value="desc"{% if direction == 'desc' %} selected{% endif %}>Descending</option><option value="asc"{% if direction == 'asc' %} selected{% endif %}>Ascending</option></select></label>
+    <label>Per page<select name="per_page"><option value="20"{% if pagination.per_page == 20 %} selected{% endif %}>20</option><option value="50"{% if pagination.per_page == 50 %} selected{% endif %}>50</option><option value="100"{% if pagination.per_page == 100 %} selected{% endif %}>100</option></select></label>
+    <button class="button compact" type="submit">Apply filters</button>
+    <a class="button compact ghost" href="/applications">Clear</a>
+  </form>
+
+  <div class="review-bar">
+    <span><b>{{ pagination.start }}–{{ pagination.end }}</b> of {{ pagination.total }} matching applications</span>
+    <form method="post" action="{{ review_url }}" data-confirm-form="Mark the current application results as reviewed?"><button class="button tiny ghost" type="submit">Mark current results reviewed</button></form>
+  </div>
+
+  {% if records %}
+  <div class="table-wrap"><table class="applications-table">
+    <caption class="sr-only">Application queue results</caption>
+    <thead><tr><th scope="col">Priority</th><th scope="col">Target</th><th scope="col">State</th><th scope="col">Risk</th><th scope="col">Action</th><th scope="col">Controls</th></tr></thead>
+    <tbody>
+    {% for item in records %}
+    {% set risk_assessed = item.risk_is_assessed if item.risk_is_assessed is defined else true %}
+    {% set risk_value = item.effective_risk_level if item.effective_risk_level is defined else item.risk_level %}
+    <tr>
+      <td><span class="priority">{{ item.priority }}</span></td>
+      <td><a class="record-link" href="/applications/{{ item.id }}"><b>{{ item.opportunity.employer }}</b>{% if item.ui_is_new %}<span class="new-marker">NEW</span>{% endif %}<small>{{ item.opportunity.role_title }} · {{ item.opportunity.location }}</small></a></td>
+      <td><span class="state state-{{ item.state|lower|replace('_','-') }}">{{ item.state|replace('_',' ') }}</span></td>
+      <td><span class="risk {% if not risk_assessed %}risk-unassessed{% else %}risk-{{ risk_value }}{% endif %}">{{ 'UNASSESSED' if not risk_assessed else 'R' ~ risk_value }}</span></td>
+      <td>{{ item.next_action or '—' }}</td>
+      <td><div class="control-row">
+        {% if item.state in ['ELIGIBILITY_CHECKED','NEEDS_USER','FAILED_RETRYABLE'] %}<button class="button tiny" data-action="/api/applications/{{ item.id }}/queue" data-confirm="Queue this exact application for review?">{{ 'Requeue' if item.state == 'FAILED_RETRYABLE' else 'Queue' }}</button>{% endif %}
+        {% if item.state in ['QUEUED','NEEDS_USER'] %}<button class="button tiny" data-action="/api/applications/{{ item.id }}/prepare" data-confirm="Prepare the exact reviewed package for this application?">Prepare</button>{% endif %}
+        {% if item.state in ['PACKAGE_PREPARED','FILLING'] %}<button class="button tiny ghost" data-action="/api/applications/{{ item.id }}/run?mode=dry-run" data-confirm="Run a dry-run for this exact application?">Dry-run</button>{% endif %}
+        {% if item.ui_target.navigator_allowed and item.state not in ['NEEDS_OA','SUBMISSION_UNKNOWN','BLOCKED'] %}<button class="button tiny primary" type="button" data-navigator-start data-application-id="{{ item.id }}" data-employer="{{ item.opportunity.employer }}" data-role="{{ item.opportunity.role_title }}" data-provider="{{ item.ui_target.provider }}" data-navigator-verified="true" data-confirm="Open this exact application in the visible Navigator and fill or recheck only approved fields? ARGUS will stop before submission for your final review.">{{ 'Review exact manifest' if item.state == 'READY_TO_SUBMIT' else 'Apply in Navigator' }}</button>{% elif not item.ui_target.automation_eligible and item.state not in ['NEEDS_OA','SUBMISSION_UNKNOWN','SUBMITTED','CONFIRMATION_VERIFIED','OA_PENDING','INTERVIEW','REJECTED','OFFER'] %}<button class="button tiny" data-action="/api/applications/{{ item.id }}/resolve-target" data-method="POST" data-confirm="Open the visible Navigator to verify the exact application target for this application? No submission will be made.">Resolve target</button>{% elif item.state == 'NEEDS_OA' %}<span class="section-copy">Human-only assessment</span>{% elif item.state == 'SUBMISSION_UNKNOWN' %}<span class="section-copy warning-copy">Unknown outcome — do not retry</span>{% endif %}
+      </div></td>
+    </tr>
+    <tr class="navigator-row" hidden><td colspan="6"><div class="navigator-panel navigator-panel-inline" data-navigator-panel data-application-id="{{ item.id }}" data-application-state="{{ item.state }}" data-employer="{{ item.opportunity.employer }}" data-role="{{ item.opportunity.role_title }}" data-provider="{{ item.ui_target.provider }}" hidden><div class="navigator-panel-head"><span class="kicker">LOCAL NAVIGATOR</span><span class="state" data-navigator-state>OPENING</span></div><p data-navigator-status>Navigator has not started.</p><p class="navigator-session" data-navigator-session-label hidden>Session <code data-navigator-session></code></p><ul class="navigator-reasons" data-navigator-reasons hidden></ul><div class="navigator-manifest" data-navigator-manifest hidden></div><div class="control-row navigator-controls"><button class="button compact primary" type="button" data-navigator-continue data-confirm="Continue the human-approved Navigator step for this exact application?" hidden>Continue</button><button class="button compact ghost" type="button" data-navigator-cancel data-confirm="Cancel this exact Navigator session without submitting?" hidden>Cancel</button></div></div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<div class="empty"><span aria-hidden="true">◫</span><h4>No matching application records</h4><p>Adjust the filters or evaluate an opportunity to create its controlled application file.</p><a class="button compact" href="/opportunities">Go to opportunities</a></div>{% endif %}
+
+  <nav class="pagination" aria-label="Applications pages">
+    <span>Page {{ pagination.page }} of {{ pagination.total_pages }}</span>
+    <div>{% if pagination.has_previous %}<a class="button tiny ghost" href="{{ pagination.previous_url }}">Previous</a>{% endif %}{% for page_number in pagination.pages %}<a class="button tiny{% if page_number == pagination.page %} active-page{% endif %}" href="{{ pagination.page_url(page_number) }}"{% if page_number == pagination.page %} aria-current="page"{% endif %}>{{ page_number }}</a>{% endfor %}{% if pagination.has_next %}<a class="button tiny ghost" href="{{ pagination.next_url }}">Next</a>{% endif %}</div>
+  </nav>
+</section>
+{% endblock %}

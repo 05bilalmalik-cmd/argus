@@ -1,0 +1,45 @@
+{% extends "v2/base.html" %}
+{% macro role_row(row, timing='') -%}
+<a class="dense-row" href="/pipeline/{{ row.id }}">
+  <span class="status-dot state-{{ row.window_state|lower|replace('_','-') }}" aria-hidden="true"></span>
+  <span class="row-copy"><strong>{{ row.employer }}</strong><small>{{ row.role }}</small></span>
+  <span class="row-state">{{ row.window_label }}</span>
+  <time title="{{ (row.closing_date or row.opening_date).isoformat() if (row.closing_date or row.opening_date) else 'No date captured' }}">{{ timing or row.closing_relative or row.opening_relative }}</time>
+</a>
+{%- endmacro %}
+{% block content %}
+<section class="landing-wordmark" aria-labelledby="argus-wordmark">
+  <h2 id="argus-wordmark">ARGUS</h2>
+  <p>See what needs you, what is open, and what changes next.</p>
+</section>
+
+<div class="cycle-counts" aria-label="Application-window state counts">
+  {% for state in ['OPEN','NOT_YET_OPEN','CLOSED','UNKNOWN'] %}<span><b>{{ state_counts[state] }}</b> {{ state|replace('_',' ')|lower }}</span>{% endfor %}
+</div>
+
+<div class="status-breakdown" aria-label="Candidate-owned status breakdown">
+  {% for item in user_status_breakdown %}<a href="/pipeline?user_status={{ item.value }}" data-user-status="{{ item.value }}"><b>{{ item.count }}</b><span>{{ item.label }}</span></a>{% endfor %}
+</div>
+
+<section class="process-lane"><div class="section-title"><div><span class="micro-label">POST-APPLICATION</span><h3>Active application process</h3><p>Candidate-owned stages stay visible and are excluded from application automation.</p></div><span>{{ active_processes|length }}</span></div>
+  {% for row in active_processes %}<a class="dense-row" href="/pipeline/{{ row.id }}"><span class="status-dot amber" aria-hidden="true"></span><span class="row-copy"><strong>{{ row.employer }}</strong><small>{{ row.role }}</small></span><span class="row-state">{{ row.user_status|replace('_',' ') }}</span></a>{% else %}<p class="empty-copy">No active post-application stage is recorded.</p>{% endfor %}
+</section>
+
+<div class="today-columns">
+  <section><div class="section-title"><div><span class="micro-label">NEEDS YOU NOW</span><h3>Human work</h3></div><a href="/needs-you">{{ needs_count }} total</a></div>
+    {% set actionable = namespace(count=0) %}
+    {% for group in needs_groups if group.count %}{% set actionable.count = actionable.count + group.count %}<a class="dense-row" href="/needs-you?group={{ group.key }}#{{ group.key }}"><span class="status-dot amber" aria-hidden="true"></span><span class="row-copy"><strong>{{ group.label }}</strong><small>{{ group.help }}</small></span><time>{{ group.count }}</time></a>{% endfor %}
+    {% if actionable.count == 0 %}<p class="empty-copy">Nothing requires a human decision. Review the opening calendar next.</p>{% endif %}
+  </section>
+  <section><div class="section-title"><div><span class="micro-label">OPEN NOW</span><h3>Available roles</h3></div><a href="/pipeline?window_state=OPEN">View all</a></div>
+    {% for row in open_now %}{{ role_row(row, row.closing_relative) }}{% else %}<p class="empty-copy">No role is evidenced as open. Import or refresh source data before acting.</p>{% endfor %}
+  </section>
+  <section><div class="section-title"><div><span class="micro-label">CLOSES THIS WEEK</span><h3>Urgency</h3></div><a href="/calendar?view=closing">Calendar</a></div>
+    {% for row in closing_week %}{{ role_row(row, row.closing_relative) }}{% else %}<p class="empty-copy">No captured closing date falls in the next seven days.</p>{% endfor %}
+  </section>
+  <section><div class="section-title"><div><span class="micro-label">OPENS NEXT</span><h3>Be early</h3></div><a href="/calendar?view=opens">Watchlist</a></div>
+    {% for row in opens_next %}{{ role_row(row, row.opening_relative) }}{% else %}<p class="empty-copy">No expected opening date is captured yet. Unknown dates remain visible in Calendar.</p>{% endfor %}
+  </section>
+</div>
+<p class="truth-note">{{ undated_count }} roles have no date captured. ARGUS never infers a deadline to make the calendar look full.</p>
+{% endblock %}

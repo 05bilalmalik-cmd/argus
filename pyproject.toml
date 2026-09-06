@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "argus-applications"
+version = "0.2.0"
+description = "Local-first, evidence-driven internship application automation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "sqlalchemy>=2.0,<3",
+  "pydantic>=2.9,<3",
+  "jinja2>=3.1,<4",
+  "python-multipart>=0.0.12,<1",
+  "playwright>=1.50,<2",
+  "httpx>=0.27,<1",
+  "cryptography>=43,<47",
+  "beautifulsoup4>=4.12,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<10",
+  "pytest-asyncio>=0.24,<2",
+]
+
+[project.scripts]
+argus = "app.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 96

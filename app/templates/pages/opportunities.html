@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-grid two-one">
+<section class="panel">
+  <div class="section-heading"><div><span class="kicker">DISCOVERY INBOX</span><h3>Tracked opportunities</h3></div><div class="heading-meta"><span class="count">{{ total_count }} total</span><span class="review-marker">Last reviewed: {{ reviewed_label }}</span></div></div>
+
+  <form class="filter-bar" method="get" action="/opportunities" aria-label="Filter opportunities">
+    <label>Search<input name="q" value="{{ query }}" type="search" placeholder="Firm, role, division" autocomplete="off"></label>
+    <label>Source<select name="source"><option value="">All sources</option>{% for option in source_options %}<option value="{{ option }}"{% if source == option %} selected{% endif %}>{{ option|replace('_',' ') }}</option>{% endfor %}</select></label>
+    <label>Cycle<select name="cycle"><option value="">All cycles</option>{% for option in cycle_options %}<option value="{{ option }}"{% if cycle == option %} selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+    <label>Sort<select name="sort"><option value="deadline"{% if sort == 'deadline' %} selected{% endif %}>Deadline</option><option value="created_at"{% if sort == 'created_at' %} selected{% endif %}>First seen</option><option value="employer"{% if sort == 'employer' %} selected{% endif %}>Employer</option><option value="role_title"{% if sort == 'role_title' %} selected{% endif %}>Role</option><option value="cycle"{% if sort == 'cycle' %} selected{% endif %}>Cycle</option></select></label>
+    <label>Order<select name="direction"><option value="asc"{% if direction == 'asc' %} selected{% endif %}>Ascending</option><option value="desc"{% if direction == 'desc' %} selected{% endif %}>Descending</option></select></label>
+    <label>Per page<select name="per_page"><option value="20"{% if pagination.per_page == 20 %} selected{% endif %}>20</option><option value="50"{% if pagination.per_page == 50 %} selected{% endif %}>50</option><option value="100"{% if pagination.per_page == 100 %} selected{% endif %}>100</option></select></label>
+    <button class="button compact" type="submit">Apply filters</button>
+    <a class="button compact ghost" href="/opportunities">Clear</a>
+  </form>
+  <div class="review-bar"><span><b>{{ pagination.start }}–{{ pagination.end }}</b> of {{ pagination.total }} matching opportunities</span><form method="post" action="{{ review_url }}" data-confirm-form="Mark the current opportunity results as reviewed?"><button class="button tiny ghost" type="submit">Mark current results reviewed</button></form></div>
+
+  {% if records %}<div class="card-list">{% for item in records %}<article class="opportunity-card" data-opportunity-id="{{ item.id }}"{% if item.ui_target.application_id %} data-application-id="{{ item.ui_target.application_id }}"{% endif %}>
+    <div class="company-mark" aria-hidden="true">{{ item.employer[:2]|upper }}</div>
+    <div class="card-main">
+      <div class="card-title"><div><h4>{{ item.employer }}{% if item.ui_is_new %}<span class="new-marker">NEW</span>{% endif %}</h4><p>{{ item.role_title }}</p></div><span class="source">{{ item.source }}</span></div>
+      <div class="meta-row"><span>{{ item.division or 'General' }}</span><span>{{ item.location or 'Location TBC' }}</span><span>{{ item.cycle }}</span>{% if item.deadline %}<span>Closes {{ item.deadline.strftime('%d %b') }}</span>{% endif %}</div>
+      <div class="target-summary" aria-label="Application target status"><span class="status-chip {% if item.ui_target.automation_eligible %}ok{% else %}warning{% endif %}">{{ item.ui_target.label }}</span>{% for reason in item.ui_target.reasons %}<span class="target-reason">{{ reason }}</span>{% endfor %}</div>
+      {% if item.ui_target.application_id %}<div class="navigator-panel navigator-panel-inline" data-navigator-panel data-application-id="{{ item.ui_target.application_id }}" data-application-state="{{ item.ui_target.application_state }}" data-employer="{{ item.employer }}" data-role="{{ item.role_title }}" data-provider="{{ item.ui_target.provider }}" hidden>
+        <div class="navigator-panel-head"><span class="kicker">LOCAL NAVIGATOR</span><span class="state" data-navigator-state>OPENING</span></div>
+        <p data-navigator-status>Navigator has not started.</p>
+        <p class="navigator-session" data-navigator-session-label hidden>Session <code data-navigator-session></code></p>
+        <ul class="navigator-reasons" data-navigator-reasons hidden></ul>
+        <div class="navigator-manifest" data-navigator-manifest hidden></div>
+         <div class="control-row navigator-controls"><button class="button compact primary" type="button" data-navigator-continue data-confirm="Continue the human-approved Navigator step for this exact application?" hidden>Continue</button><button class="button compact ghost" type="button" data-navigator-cancel data-confirm="Cancel this exact Navigator session without submitting?" hidden>Cancel</button></div>
+      </div>{% endif %}
+    </div>
+    <div class="card-actions">
+      <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer" class="button tiny ghost source-only" aria-label="Open source">Open source <span aria-hidden="true">↗</span></a>
+       {% if item.ui_target.navigator_allowed %}<button class="button compact" type="button" data-navigator-start data-application-id="{{ item.ui_target.application_id }}" data-employer="{{ item.employer }}" data-role="{{ item.role_title }}" data-provider="{{ item.ui_target.provider }}" data-navigator-verified="true" data-confirm="Open this exact application in the visible Navigator and fill only approved fields? ARGUS will stop before submission for your final review.">Apply in Navigator</button>
+       {% elif not item.ui_target.automation_eligible and item.ui_target.application_state not in ['SUBMITTED','CONFIRMATION_VERIFIED','OA_PENDING','INTERVIEW','REJECTED','OFFER','SUBMISSION_UNKNOWN','NEEDS_OA'] %}<button class="button compact" type="button" data-action="/api/opportunities/{{ item.id }}/resolve-target" data-method="POST" data-confirm="Open the visible Navigator to verify the exact application target for this opportunity? No submission will be made.">Resolve application target</button>{% if not item.ui_application %}<button class="button compact ghost" type="button" data-action="/api/opportunities/{{ item.id }}/evaluate" data-method="POST" data-confirm="Evaluate this exact opportunity and create its application record?">Evaluate target</button>{% endif %}
+       {% elif not item.ui_application %}<button class="button compact" type="button" data-action="/api/opportunities/{{ item.id }}/evaluate" data-method="POST" data-confirm="Evaluate this exact opportunity and create its application record?">Evaluate target</button>
+      {% else %}<span class="status-chip warning">Navigator unavailable</span>{% endif %}
+    </div>
+  </article>{% endfor %}</div>
+  {% else %}<div class="empty"><span aria-hidden="true">◇</span><h4>Your inbox is clear</h4><p>Add a role manually, import a CSV, or use the capture extension.</p></div>{% endif %}
+  <nav class="pagination" aria-label="Opportunity pages"><span>Page {{ pagination.page }} of {{ pagination.total_pages }}</span><div>{% if pagination.has_previous %}<a class="button tiny ghost" href="{{ pagination.previous_url }}">Previous</a>{% endif %}{% for page_number in pagination.pages %}<a class="button tiny{% if page_number == pagination.page %} active-page{% endif %}" href="{{ pagination.page_url(page_number) }}"{% if page_number == pagination.page %} aria-current="page"{% endif %}>{{ page_number }}</a>{% endfor %}{% if pagination.has_next %}<a class="button tiny ghost" href="{{ pagination.next_url }}">Next</a>{% endif %}</div></nav>
+</section>
+<aside class="stack">
+<section class="panel sticky"><div class="section-heading"><div><span class="kicker">NEW TARGET</span><h3>Add opportunity</h3></div></div>
+<form class="form-grid" data-api-form action="/api/opportunities" method="POST" data-refresh="true" data-confirm-form="Add this exact opportunity to the local inbox?">
+<label>Employer<input name="employer" required placeholder="Ares Management"></label>
+<label>Role title<input name="role_title" required placeholder="Summer Analyst"></label>
+<label>Division<input name="division" placeholder="Private Credit"></label>
+<div class="split"><label>Location<input name="location" placeholder="London"></label><label>Cycle<input name="cycle" required value="2027"></label></div>
+<label>Source / discovery URL<input name="url" type="url" required placeholder="https://..."></label>
+<div class="split"><label>ATS<select name="ats_type"><option>unknown</option><option>greenhouse</option><option>lever</option><option>workday</option></select></label><label>Deadline<input name="deadline" type="date"></label></div>
+<input type="hidden" name="source" value="manual"><input type="hidden" name="cv_required" value="true">
+<button class="button primary full" type="submit">Add to inbox</button></form></section>
+<section class="panel compact-panel"><span class="kicker">CSV IMPORT</span><p>Use the included Trackr-compatible template. ARGUS imports only the file you provide; it does not crawl Trackr.</p><form data-upload-form action="/api/opportunities/import-csv" method="post"><input type="file" name="file" accept=".csv" required><input type="hidden" name="source" value="trackr_csv"><button class="button ghost full" type="submit">Import CSV</button></form></section>
+</aside></div>
+{% endblock %}

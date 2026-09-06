@@ -1,0 +1,63 @@
+{% extends "v2/base.html" %}
+{% block content %}
+<div class="section-intro"><div><span class="micro-label">HUMAN BOUNDARY</span><h2>One kind of work at a time</h2><p>{{ total }} rows partitioned once. Nothing here was silently submitted.</p></div></div>
+<nav class="group-index" aria-label="Needs You groups">{% for group in groups %}<a href="/needs-you?group={{ group.key }}"{% if selected_group.key == group.key %} aria-current="page"{% endif %}><span>{{ group.label }}</span><b>{{ group.count }}</b></a>{% endfor %}</nav>
+<section class="need-group" id="{{ selected_group.key }}"><div class="section-title"><div><span class="micro-label">{{ selected_group.label|upper }}</span><h3>{{ selected_group.label }}</h3><p>{{ selected_group.help }}</p></div><span>{{ selected_group.count }}</span></div>
+  {% for row in selected_group.rows %}
+  <div class="needs-row" data-application-id="{{ row.application_id }}">
+    <a class="dense-row" href="/applications/{{ row.application_id }}"><span class="status-dot {% if selected_group.key in ['captcha','login','question'] %}amber{% elif selected_group.key == 'review' %}green{% else %}neutral{% endif %}" aria-hidden="true"></span><span class="row-copy"><strong>{{ row.employer }}</strong><small>{{ row.role }} · {{ row.next_action }}</small></span><span class="row-state">{{ row.application_state|replace('_',' ')|title }}</span><time>Open</time></a>
+    {% if row.handoff_required %}
+    <div class="handoff-checklist" data-human-boundary="{% if row.captcha_required %}captcha{% else %}human-review{% endif %}">
+      <p><strong>Employer / role:</strong> {{ row.employer }} · {{ row.role }}</p>
+      {% if row.captcha_required %}<p><strong>CAPTCHA:</strong> Solve the CAPTCHA in the open browser window.</p>{% else %}<p><strong>CAPTCHA:</strong> No CAPTCHA is recorded; complete any visible challenge yourself.</p>{% endif %}
+      {% if row.blank_field_reasons %}<p><strong>Blank fields and reasons:</strong></p><ul class="handoff-reasons" aria-label="Blank field reasons">{% for item in row.blank_field_reasons %}<li><span>{{ item.label }}</span><small>{{ item.reason }}</small><code>{{ item.reason_code }}</code></li>{% endfor %}</ul>{% else %}<p><strong>Blank fields and reasons:</strong> {{ row.next_action or 'No approved value is available; review the open form.' }}</p>{% endif %}
+      {% if row.human_only_fields %}<p class="handoff-never-fill"><strong>ARGUS will never fill:</strong> legal declarations or eligibility answers without exact reviewed evidence, and factual or compensation answers it cannot verify.</p>{% endif %}
+      {% if row.prefill_wall %}<p class="handoff-wall"><strong>Wall:</strong> {{ row.prefill_wall }}</p>{% endif %}
+      <p><strong>Submission:</strong> Press Submit yourself. ARGUS will not press Submit.</p>
+    </div>
+    {% endif %}
+    {% if row.user_status_excluded %}
+    <p class="exclusion-copy">Candidate status: {{ row.user_status_label }}. No action required; ARGUS will not resolve or submit this opportunity.</p>
+    {% elif row.prefill_continue_allowed %}
+    <div class="action-line"><a class="secondary-action" href="/applications/{{ row.application_id }}">Continue</a><span data-prefill-status>{{ row.prefill_wall or 'A live visible Navigator session is ready. Continue in the same browser.' }}</span></div>
+    {% elif row.prefill_start_allowed %}
+    <div class="action-line"><button class="primary-action" type="button" data-prefill-start data-application-id="{{ row.application_id }}" data-confirm="Prepare this exact application in the visible browser? ARGUS will stop before Submit.">Prepare this application</button><span data-prefill-status>Visible PREFILL will stop for your review before Submit.</span></div>
+    {% elif row.target_choice_required %}
+    <form class="quiet-form target-choice-form" data-api-form data-confirm-form="Record this exact human role choice and rerun identity checks? No submission will be made." data-refresh="true" action="/api/applications/{{ row.application_id }}/choose-target" method="post">
+      <input type="hidden" name="application_id" value="{{ row.application_id }}">
+      <fieldset class="wide"><legend>Choose the exact role from the enumerated listing</legend>
+      {% for candidate in row.candidate_roles %}<label class="check-line"><input type="radio" name="application_url" value="{{ candidate.url }}" required><span><strong>{{ candidate.title }}</strong>{% if candidate.location %}<small>{{ candidate.location }}</small>{% endif %}{% if candidate.programme_type %}<small>{{ candidate.programme_type }}</small>{% endif %}</span></label>{% endfor %}
+      </fieldset>
+      <small>ARGUS will verify only the URL you choose. It will not select a role automatically.</small>
+      <label class="wide">Why did you choose this role?<textarea name="resolution_reason" rows="3" minlength="8" maxlength="4000" required></textarea></label>
+      <label class="check-line"><input type="checkbox" name="confirmed" required> I checked the employer, role and exact listing URL</label>
+      <button type="submit">Choose role &amp; verify URL</button>
+    </form>
+    {% elif row.application_state == 'BLOCKED' and row.target_resolution_failure %}
+    <div class="handoff-checklist target-url-display">
+      <p><strong>ARGUS believes the target is:</strong></p>
+      <p class="url-display" style="word-break: break-all;">
+        {% if row.stored_url %}<a href="{{ row.stored_url }}" target="_blank" rel="noopener noreferrer">{{ row.stored_url }}</a>
+        {% else %}<em>No URL stored</em>{% endif %}
+      </p>
+    </div>
+    <form class="quiet-form target-resolution-form" data-api-form data-manual-target-form data-confirm-form="Verify this exact URL against the stored employer and role? No submission will be made." data-refresh="true" action="/api/applications/{{ row.application_id }}/resolve-blocker" method="post">
+      <input type="hidden" name="application_id" value="{{ row.application_id }}">
+      <label class="wide">If the link above is wrong, paste the correct URL<input name="application_url" type="url" maxlength="2048" required placeholder="https://..." autocomplete="url" aria-describedby="target-url-help-{{ row.application_id }}"></label>
+      <small id="target-url-help-{{ row.application_id }}">Paste the employer's current application page. ARGUS will classify and verify it before advancing this row.</small>
+      <label class="wide">Why are you resolving this blocker?<textarea name="resolution_reason" rows="3" minlength="8" maxlength="4000" required></textarea></label>
+      <label class="check-line"><input type="checkbox" name="confirmed" required> I checked the employer and role identity</label>
+      <button type="submit">Verify URL &amp; rerun checks</button>
+    </form>
+    {% elif row.application_state == 'BLOCKED' %}
+    <form class="quiet-form blocker-resolution-form" data-api-form data-confirm-form="Record this exact blocker review? No submission will be made." data-refresh="true" action="/api/applications/{{ row.application_id }}/resolve-blocker" method="post">
+      <input type="hidden" name="application_id" value="{{ row.application_id }}">
+      <label class="wide">Why are you resolving this blocker?<textarea name="resolution_reason" rows="3" minlength="8" maxlength="4000" required></textarea></label>
+      <label class="check-line"><input type="checkbox" name="confirmed" required> I reviewed the recorded blocker</label>
+      <button type="submit">Record resolution &amp; rerun checks</button>
+    </form>
+    {% endif %}
+  </div>
+  {% else %}<p class="empty-copy">{{ selected_group.empty_title }} {{ selected_group.empty_action }}</p>{% endfor %}
+</section>
+{% endblock %}

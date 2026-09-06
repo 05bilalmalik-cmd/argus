@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="detail-header">
+  <a class="button tiny ghost" href="/applications">← Back to applications</a>
+  <div><span class="kicker">RECOVERY FILE</span><h2>{{ opportunity.employer }} · {{ opportunity.role_title }}</h2><p>{{ opportunity.division or 'General' }} · {{ opportunity.location or 'Location TBC' }} · {{ opportunity.cycle }}</p></div>
+  {% set risk_assessed = application.risk_is_assessed if application.risk_is_assessed is defined else true %}
+  {% set risk_value = application.effective_risk_level if application.effective_risk_level is defined else application.risk_level %}
+  <span class="state state-{{ application.state|lower|replace('_','-') }}">{{ application.state|replace('_',' ') }}</span>
+</div>
+
+<div class="detail-grid">
+  <section class="panel">
+    <div class="section-heading"><div><span class="kicker">BLOCKERS</span><h3>Blockers</h3></div><span class="risk {% if not risk_assessed %}risk-unassessed{% else %}risk-{{ risk_value }}{% endif %}">{{ 'UNASSESSED' if not risk_assessed else 'R' ~ risk_value }}</span></div>
+    {% if blockers %}<ul class="blocker-list">{% for blocker in blockers %}<li><span aria-hidden="true">!</span><span>{{ blocker }}</span></li>{% endfor %}</ul>{% else %}<div class="empty mini success-empty"><span aria-hidden="true">✓</span><h4>No recorded blockers</h4><p>The current application file has no unresolved blocker evidence.</p></div>{% endif %}
+    {% if application.next_action %}<div class="next-action"><span class="kicker">NEXT ACTION</span><b>{{ application.next_action }}</b></div>{% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="section-heading"><div><span class="kicker">SAFE CONTROLS</span><h3>Recovery actions</h3></div></div>
+    <p class="section-copy">These controls resume or inspect the existing guarded workflow. Apply opens the local Navigator; it never opens a listing as an application and never claims submission from a blocked response.</p>
+    <div class="control-row detail-controls">
+      {% if safe_actions.can_queue %}<button class="button compact" data-action="/api/applications/{{ application.id }}/queue" data-confirm="Queue this exact application for review?">Queue / requeue</button>{% endif %}
+      {% if safe_actions.can_prepare %}<button class="button compact" data-action="/api/applications/{{ application.id }}/prepare" data-confirm="Prepare the exact reviewed package for this application?">Prepare package</button>{% endif %}
+      {% if safe_actions.can_dry_run %}<button class="button compact ghost" data-action="/api/applications/{{ application.id }}/run?mode=dry-run" data-confirm="Run a dry-run for this exact application?">Run dry-run</button>{% endif %}
+      {% if safe_actions.can_navigate %}<button class="button compact primary" type="button" data-navigator-start data-application-id="{{ application.id }}" data-employer="{{ opportunity.employer }}" data-role="{{ opportunity.role_title }}" data-provider="{{ target.provider }}" data-navigator-verified="true" data-confirm="Open this exact application in the visible Navigator and fill or recheck only approved fields? ARGUS will stop before submission for your final review.">{{ 'Review exact manifest' if safe_actions.can_review_manifest else 'Open Navigator' }}</button>{% endif %}
+      {% if safe_actions.can_resolve_target %}<button class="button compact" type="button" data-action="/api/applications/{{ application.id }}/resolve-target" data-method="POST" data-confirm="Open the visible Navigator to verify the exact application target for this application? No submission will be made.">Resolve application target</button>{% endif %}
+      {% if safe_actions.is_needs_oa %}<p class="section-copy">Assessment-stage applications cannot resume automation. Complete the assessment, then record the outcome (or re-queue) from the Applications page.</p>{% endif %}
+      {% if application.state == 'SUBMISSION_UNKNOWN' %}<p class="section-copy warning-copy">Submission outcome is unknown. Reconcile the employer record first; do not retry from ARGUS.</p>{% endif %}
+      {% if not target.navigator_allowed and not safe_actions.is_needs_oa and application.state != 'SUBMISSION_UNKNOWN' %}<p class="section-copy warning-copy">No verified application target is available for Navigator automation. Use the source-only link below for manual review.</p>{% endif %}
+    </div>
+    <div class="navigator-panel" data-navigator-panel data-application-id="{{ application.id }}" data-application-state="{{ application.state }}" data-employer="{{ opportunity.employer }}" data-role="{{ opportunity.role_title }}" data-provider="{{ target.provider }}" hidden>
+      <div class="navigator-panel-head"><span class="kicker">LOCAL NAVIGATOR</span><span class="state" data-navigator-state>OPENING</span></div>
+      <p data-navigator-status>Navigator has not started.</p>
+      <p class="navigator-session" data-navigator-session-label hidden>Session <code data-navigator-session></code></p>
+      <ul class="navigator-reasons" data-navigator-reasons hidden></ul>
+      <div class="manifest-evidence" data-navigator-available-evidence><b>Evidence available</b><span>Documents: {% if navigator_manifest.documents %}{% for document in navigator_manifest.documents %}{{ document.kind }} · {{ document.name }} ({{ document.approved }}){% if not loop.last %}; {% endif %}{% endfor %}{% else %}none recorded{% endif %}</span><span>Answer mappings: {{ navigator_manifest.answers|length }} evidence record{{ '' if navigator_manifest.answers|length == 1 else 's' }}; values remain human-reviewed.</span></div>
+      <div class="navigator-manifest" data-navigator-manifest hidden></div>
+      <div class="control-row navigator-controls"><button class="button compact primary" type="button" data-navigator-continue data-confirm="Continue the human-approved Navigator step for this exact application?" hidden>Continue</button><button class="button compact ghost" type="button" data-navigator-cancel data-confirm="Cancel this exact Navigator session without submitting?" hidden>Cancel</button></div>
+    </div>
+    <div class="detail-facts"><div><small>SOURCE / DISCOVERY URL (source-only)</small><a href="{{ opportunity.url }}" target="_blank" rel="noopener noreferrer">Open source <span aria-hidden="true">↗</span></a></div><div><small>TARGET STATUS</small><b>{{ target.label }}</b>{% for reason in target.reasons %}<small>{{ reason }}</small>{% endfor %}</div><div><small>PROVIDER / DESTINATION</small><b>{{ target.provider }}</b><small>{{ 'Verified destination is used only by the local Navigator.' if target.automation_eligible else 'No verified application destination.' }}</small></div><div><small>Last reviewed</small><b>{{ last_reviewed }}</b></div></div>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading"><div><span class="kicker">EVIDENCE</span><h3>Eligibility and conflict checks</h3></div></div>
+    <div class="evidence-grid"><article><h4>Eligibility</h4><pre>{{ eligibility }}</pre></article><article><h4>Conflict</h4><pre>{{ conflict }}</pre></article></div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="section-heading"><div><span class="kicker">LOCAL EGRESS DISCLOSURE</span><h3>First-party requests blocked locally</h3></div><span class="count">{{ first_party_requests|length }}</span></div>
+    <p class="section-copy">These requests were attempted by the provider and blocked locally. Candidate-data markers describe what a request would have carried; they do not claim delivery.</p>
+    {% if first_party_requests %}<div class="audit-list">{% for item in first_party_requests %}<article><div><h4>{{ item.host }}</h4><code>{{ item.path }}</code><p>{{ item.method }} &middot; Resource type: {{ item.resource_type }}</p></div><div><small>Candidate data: {{ 'yes' if item.carries_candidate_data else 'no' }}</small><small>Kind: {{ item.candidate_data_kind or 'none' }}</small></div></article>{% endfor %}</div>{% else %}<div class="empty mini"><span aria-hidden="true">x</span><h4>No permitted first-party request evidence recorded</h4><p>No blocked provider-service request metadata is attached to this application.</p></div>{% endif %}
+  </section>
+
+  <section class="panel">
+    <div class="section-heading"><div><span class="kicker">ARTIFACTS</span><h3>Documents and run outputs</h3></div><span class="count">{{ artifacts|length }}</span></div>
+    {% if artifacts %}<div class="artifact-list">{% for artifact in artifacts %}<div class="artifact-row"><span class="file-icon" aria-hidden="true">FILE</span><div><b>{{ artifact.label }} · {{ artifact.name }}</b><small>{{ artifact.path }}</small></div>{% if artifact.approved is sameas true %}<span class="status-chip ok">Approved</span>{% elif artifact.approved is sameas false %}<span class="status-chip warning">Unapproved</span>{% endif %}</div>{% endfor %}</div>{% else %}<div class="empty mini"><span aria-hidden="true">▱</span><h4>No artifacts recorded</h4><p>Prepare the package or run a dry-run to create evidence.</p></div>{% endif %}
+    {% if runs %}<div class="run-list"><h4>Run history</h4>{% for run in runs %}<div class="run-row"><span>{{ run.mode|upper }}</span><b>{{ run.state|replace('_',' ') }}</b><small>{{ run.adapter }} · {{ run.created_at.strftime('%d %b %Y, %H:%M') if run.created_at else '—' }}</small>{% if run.error %}<small><span class="history-label">Historical run evidence:</span> {{ run.error }}</small>{% endif %}</div>{% endfor %}</div>{% endif %}
+  </section>
+
+  <section class="panel span-2">
+    <div class="section-heading"><div><span class="kicker">AUDIT HISTORY</span><h3>Audit history</h3></div><span class="count">{{ audits|length }}</span></div>
+    {% if audits %}<div class="audit-list">{% for item in audits %}<article><span class="audit-id">#{{ item.record.id }}</span><div><h4>{{ item.record.event_type }}</h4><p>{{ item.record.actor }} · {{ item.record.created_at }}</p></div><code>{{ item.details }}</code></article>{% endfor %}</div>{% else %}<div class="empty mini"><span aria-hidden="true">⌗</span><h4>No audit events for this application</h4></div>{% endif %}
+  </section>
+</div>
+{% endblock %}

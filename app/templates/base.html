@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{{ title }} · ARGUS</title>
+  <link rel="stylesheet" href="/static/css/argus.css">
+  <script src="/static/js/argus.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="/" aria-label="ARGUS command centre">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span><strong>ARGUS</strong><small>APPLICATION OS</small></span>
+    </a>
+    <nav class="nav" aria-label="Primary navigation">
+      {% set nav = [
+        ('dashboard','/','Command Centre','⌁'),('scout','/scout','Scout','◈'),('opportunities','/opportunities','Opportunities','◇'),
+        ('applications','/applications','Applications','◫'),('needs-you','/needs-you','Needs You','!'),
+        ('profile','/profile','Profile','◎'),('answers','/answers','Answer Bank','≡'),
+        ('documents','/documents','Documents','▱'),('mail','/mail','Mail & Assessments','↗'),
+        ('audit','/audit','Audit Trail','⌗'),('settings','/settings','Settings','⚙'),('lab','/lab','ATS Laboratory','⚗')
+      ] %}
+      {% for key, href, label, icon in nav %}
+      <a href="{{ href }}" class="nav-link {% if active == key %}active{% endif %}"{% if active == key %} aria-current="page"{% endif %}>
+        <span class="nav-icon" aria-hidden="true">{{ icon }}</span><span>{{ label }}</span>
+        {% if key == 'needs-you' and snapshot is defined and snapshot.needs_user %}<b>{{ snapshot.needs_user }}</b>{% endif %}
+        {% if key == 'opportunities' and new_opportunities_count is defined and new_opportunities_count %}<b aria-label="{{ new_opportunities_count }} new opportunities">{{ new_opportunities_count }}</b>{% endif %}
+      </a>
+      {% endfor %}
+    </nav>
+    <div class="sidebar-foot">
+      <div class="system-state" role="status"><span class="pulse" aria-hidden="true"></span><div><b>LOCAL CONTROL</b><small>127.0.0.1 · protected</small></div></div>
+      <div class="mode-pill {% if live_submit %}danger{% endif %}" title="{{ mode_description }}">
+        <span>{{ mode_label }}</span>
+        <small>{{ mode_description }}</small>
+      </div>
+    </div>
+  </aside>
+
+  <main class="shell">
+    <header class="topbar">
+      <button class="menu-button" type="button" data-menu aria-controls="sidebar" aria-expanded="false" aria-label="Open navigation"><span aria-hidden="true">☰</span></button>
+      <div><p class="eyebrow">MONOLITH RESEARCH / ARGUS</p><h1>{{ title }}</h1></div>
+      <div class="top-actions"><span class="guard"><i></i>GUARDRAILS ACTIVE</span><span class="clock" data-clock>--:--</span></div>
+    </header>
+    <section class="content">
+      {% block content %}{% endblock %}
+    </section>
+  </main>
+  <div class="toast-stack" aria-live="polite" data-toasts></div>
+  <div class="overlay" data-overlay></div>
+</body>
+</html>
