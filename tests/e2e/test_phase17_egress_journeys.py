@@ -73,7 +73,7 @@ class _LabHandler(BaseHTTPRequestHandler):
               <label>Last name<input id="last_name" name="last_name"></label>
               <script>
                 document.querySelector('#first_name').addEventListener('input', () => {
-                  fetch('/validate?email=alex%40example.test').catch(() => {});
+                  fetch('/validate?email=demo%40example.test').catch(() => {});
                 });
               </script></form></body></html>"""
             self.send_response(200)

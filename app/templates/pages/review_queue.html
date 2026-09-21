@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <div class="section-heading">
+    <div><span class="kicker">HUMAN GATE</span><h3>Review queue</h3></div>
+    <div class="heading-meta"><span class="count">{{ items|length }} awaiting review</span></div>
+  </div>
+  <p class="section-copy">These applications were prefilled and are waiting for a human look. Open each one, check the employer, role and answers on its details page, then tick only the rows you have fully reviewed.</p>
+
+  <div class="metric-grid" aria-label="Review queue counts">
+    {% for state, count in counts.items() %}
+    <article class="metric"><span>{{ state|replace('_',' ') }}</span><strong>{{ count }}</strong><small>awaiting review</small></article>
+    {% endfor %}
+  </div>
+
+  {% if items %}
+  <form id="review-confirm-form" aria-label="Confirm reviewed applications">
+    <div class="table-wrap"><table class="applications-table">
+      <caption class="sr-only">Applications awaiting review</caption>
+      <thead><tr><th scope="col"><span class="sr-only">Select</span></th><th scope="col">Employer</th><th scope="col">Role</th><th scope="col">State</th><th scope="col">Prefilled at</th><th scope="col">Details</th></tr></thead>
+      <tbody>
+      {% for item in items %}
+      <tr>
+        <td><input type="checkbox" name="application_ids" value="{{ item.id }}" data-employer="{{ item.employer }}" data-role="{{ item.role }}" aria-label="Select {{ item.employer }} — {{ item.role }}"></td>
+        <td><b>{{ item.employer }}</b></td>
+        <td>{{ item.role }}</td>
+        <td><span class="state state-{{ item.status|lower|replace('_','-') }}">{{ item.status|replace('_',' ') }}</span></td>
+        <td>{{ item.prefilled_at or '—' }}</td>
+        <td><a class="button tiny ghost" href="/applications/{{ item.id }}">Details</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+
+    <div class="notice critical" role="alert">
+      <div><span>!</span></div>
+      <div><b>Confirming may submit real applications to real employers</b>
+      <p>Pressing “Confirm selected” sends the ticked rows to <code>POST /api/review-queue/confirm</code> for submission. Only tick rows you have fully reviewed on their details page. Nothing is submitted until you press the button and confirm.</p></div>
+    </div>
+
+    <div class="review-bar">
+      <span>Selected: <b id="review-selected-count">0</b> of {{ items|length }} (maximum {{ confirm_cap }} per batch)</span>
+    </div>
+    <p class="section-copy" id="review-selected-employers" aria-live="polite">No applications selected.</p>
+    <p class="section-copy warning-copy" id="review-cap-message" hidden>You selected <b id="review-selected-overflow">0</b> — the maximum per batch is {{ confirm_cap }}. Deselect some rows before confirming.</p>
+    <div class="control-row">
+      <button class="button compact primary" id="review-confirm-button" type="submit" disabled>Confirm selected</button>
+    </div>
+    <p class="section-copy" id="review-confirm-result" role="status" aria-live="polite"></p>
+  </form>
+
+  <script>
+  (function () {
+    var CAP = {{ confirm_cap }};
+    var form = document.getElementById("review-confirm-form");
+    if (!form) return;
+    var boxes = Array.prototype.slice.call(form.querySelectorAll('input[name="application_ids"]'));
+    var countEl = document.getElementById("review-selected-count");
+    var employersEl = document.getElementById("review-selected-employers");
+    var capMessage = document.getElementById("review-cap-message");
+    var overflowEl = document.getElementById("review-selected-overflow");
+    var button = document.getElementById("review-confirm-button");
+    var resultEl = document.getElementById("review-confirm-result");
+
+    function selected() { return boxes.filter(function (box) { return box.checked; }); }
+
+    function refresh() {
+      var rows = selected();
+      countEl.textContent = String(rows.length);
+      if (!rows.length) {
+        employersEl.textContent = "No applications selected.";
+      } else {
+        employersEl.textContent = "Selected: " + rows.map(function (box) {
+          return box.getAttribute("data-employer") + " — " + box.getAttribute("data-role");
+        }).join("; ") + ".";
+      }
+      var over = rows.length > CAP;
+      capMessage.hidden = !over;
+      if (over) overflowEl.textContent = String(rows.length);
+      button.disabled = rows.length === 0 || over;
+      return rows;
+    }
+
+    boxes.forEach(function (box) { box.addEventListener("change", refresh); });
+    refresh();
+
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var rows = selected();
+      if (!rows.length || rows.length > CAP) { refresh(); return; }
+      var names = rows.map(function (box) { return box.getAttribute("data-employer"); }).join(", ");
+      var ok = window.confirm(
+        "Confirm " + rows.length + " application(s) for " + names + "? " +
+        "This may submit real applications to real employers. Only continue if you reviewed every selected row."
+      );
+      if (!ok) return;
+      button.disabled = true;
+      resultEl.textContent = "Confirming…";
+      fetch("/api/review-queue/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ application_ids: rows.map(function (box) { return box.value; }) })
+      }).then(function (response) {
+        return response.json().then(function (payload) { return { status: response.status, payload: payload }; });
+      }).then(function (outcome) {
+        if (outcome.status >= 200 && outcome.status < 300) {
+          resultEl.textContent = "Confirmed " + rows.length + " application(s). Reload the page to see the updated queue.";
+          window.location.reload();
+        } else {
+          resultEl.textContent = "Confirmation refused (" + outcome.status + "): " + JSON.stringify(outcome.payload);
+          button.disabled = false;
+        }
+      }).catch(function (error) {
+        resultEl.textContent = "Confirmation failed: " + error;
+        button.disabled = false;
+      });
+    });
+  })();
+  </script>
+  {% else %}
+  <div class="empty success-empty"><span aria-hidden="true">✓</span><h4>Review queue is empty</h4><p>No applications are waiting for review. Prefilled applications will appear here once they need a human look.</p><a class="button compact" href="/applications">Go to applications</a></div>
+  {% endif %}
+</section>
+{% endblock %}

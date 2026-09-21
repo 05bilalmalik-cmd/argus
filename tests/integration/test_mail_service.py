@@ -14,7 +14,7 @@ def oa_email() -> bytes:
     message = EmailMessage()
     message["Message-ID"] = "<oa-arg-55@example.test>"
     message["From"] = "earlycareers@argustestcapital.example"
-    message["To"] = "alex@example.test"
+    message["To"] = "demo.candidate@example.test"
     message["Subject"] = "ARGUS Test Capital — online assessment invitation"
     message["Date"] = "Sat, 22 Aug 2026 09:30:00 +0100"
     message.set_content(

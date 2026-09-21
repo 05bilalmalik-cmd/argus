@@ -200,7 +200,7 @@ def test_embedded_provider_advance_uses_control_shape_not_validation_text(adapte
         assert adapter.advance_one_step(page, max_wait_steps=2) is False
         assert page.locator('.validation-error').count() == 1
 
-        page.locator('#first').fill('Alex')
+        page.locator('#first').fill('Demo')
         assert adapter.advance_one_step(page, max_wait_steps=2) is True
         assert page.locator('#last').count() == 1
 

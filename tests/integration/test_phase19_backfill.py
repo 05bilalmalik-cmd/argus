@@ -514,7 +514,7 @@ def test_backfill_rolls_back_injected_form_evidence_count_drift(
 
     def inject_answer_entry(self: ScoutService) -> dict[str, int]:
         stats = original(self)
-        self.session.add(AnswerEntry(canonical_key="phase19-injected-drift"))  # gitleaks:allow -- synthetic answer identifier, not a credential
+        self.session.add(AnswerEntry(canonical_key="phase19-injected-drift"))  # gitleaks:allow -- synthetic canonical field ID
         return stats
 
     monkeypatch.setattr(
@@ -535,7 +535,7 @@ def test_backfill_rolls_back_injected_form_evidence_count_drift(
         assert (
             connection.execute(
                 "SELECT COUNT(*) FROM answer_entries "
-                "WHERE canonical_key='phase19-injected-drift'"  # gitleaks:allow -- synthetic answer identifier, not a credential
+                "WHERE canonical_key='phase19-injected-drift'"  # gitleaks:allow -- synthetic canonical field ID
             ).fetchone()[0]
             == 0
         )

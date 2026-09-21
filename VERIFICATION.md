@@ -1,64 +1,116 @@
-# Public source verification — 2026-09-06
+# Integrated source verification — 2026-09-21
 
-This is a source publication, not a signed release, installed upgrade, or
-certification of real-employer autonomous applications.
+This records three separate scopes: the frozen integrated candidate, its
+privacy-sanitised public source export, and the authorised local installation.
+It is not certification of autonomous real-employer applications or a signed
+binary release. Earlier publication evidence, including its unresolved failure
+mechanisms, is preserved in [the previous report](docs/VERIFICATION_PUBLIC_20260906.md).
 
-## Fresh checks of the public working tree
+## Fresh public-source checks
 
-- Python 3.13.13, Windows; existing development dependencies and Chromium.
-- Full suite collection: **2349 tests collected**.
-- Focused regression run: **691 passed**, no failures or skips. Covers sanitised unit/integration fixtures and launcher, sandbox, folder resolution, document, dropdown, radio and PREFILL boundaries.
-- Browser rechecks: **5 passed**, no failures or skips.
-- Distinct passing public-tree tests across those completed runs: **696**.
-- The first browser recheck also passed independently on the untouched original source; this does not establish the cause of the earlier failure.
-- Python source compiled successfully without execution.
-- Production privacy scanner passed. Full-tree redacted Gitleaks scan passed after three reviewed non-secret fixture annotations (answer identifiers and a DOM-root identifier).
-- Independent publication-scope review reported no blocking privacy/export/semantic issues. This was not an application-wide security audit.
+Environment: Windows, Python 3.13.13, existing development dependencies and
+Chromium. Test runs used fresh external data/cache/temp roots before importing
+ARGUS; the private applicant database and browser profiles were not test inputs.
 
-## Failures and limits retained
+- Full collection: **3,096 tests collected**, exit 0.
+- Non-E2E source regressions: **2,989 passed, 2 skipped, 0 failures/errors** across
+  **2,991 unique test identities**, exit 0. Application and test source hashes
+  were unchanged during the run.
+- Final trailing-whitespace cleanup touched one application module and five
+  test files. The affected/dependent regression replay then returned **151
+  passed**, exit 0, with unchanged source hashes. Removing a final empty line
+  from the tracker stylesheet was followed by **175 passing tracker tests**.
+  These are repeated tests already in the non-E2E run, not additional distinct
+  coverage.
+- Production privacy scanner: exit 0.
+- Full-tree redacted Gitleaks: no findings after narrowly annotating reviewed
+  synthetic fixture identifiers and deliberately fake redaction-test secrets.
+- Candidate-name scan: no remaining candidate-name findings. Workstation and
+  applicant examples are synthetic; private operational artifacts are excluded.
+- Upstream license and public history are retained; no private local Git history
+  was imported.
 
-The initial export omitted `requeue_blocked.py`, a dependency of the state-release
-tests. Collection failed; the dependency was restored and the focused run includes
-its importing test module.
+The two skips are explicit:
 
-A broad browser-inclusive run was **interrupted, not passed**. Its saved progress
-record contains **5 failures**. All of those tests passed in subsequent
-focused public-tree reruns, but their original failure mechanisms remain
-**UNVERIFIED**. Do not describe the full suite as green or claim these failures
-were fixed. The smaller reruns do not replace a clean complete-suite result.
+1. Windows symlink creation requires a privilege unavailable in this environment.
+2. The live Greenhouse smoke is opt-in and `ARGUS_NET_TESTS=1` was not enabled.
 
-Observed failures in that interrupted run:
+A browser-inclusive public-export replay was started and deliberately stopped
+while repeating the long browser E2Es. **It was not passed.** The completed
+non-E2E run above and the installed UI check below do not certify all public-
+export browser E2Es. The required E2E inventory still includes the local-portal
+and static-legal suites and retains strict missing/unexpected-file rejection.
+No test was removed from that inventory to make publication pass.
 
-- `tests/e2e/test_application_navigator_journeys.py::test_typed_journey_command_runs_on_navigator_owner_thread`
-- `tests/e2e/test_application_navigator_journeys.py::test_low_level_submit_mode_journey_stops_before_activation[workable-journey-workable]`
-- `tests/e2e/test_application_navigator_journeys.py::test_captcha_preflight_hands_off_without_consuming_authority_or_post[after_preflight]`
-- `tests/e2e/test_application_navigator_journeys.py::test_http_confirm_rejects_same_origin_target_mutation_after_display[action]`
-- `tests/e2e/test_lab_adapter_variants.py::test_ats_variants_detect_fill_and_submit_once[greenhouse-greenhouse]`
+## Frozen integrated candidate evidence
 
-One dependency deprecation warning was present in the completed pytest runs.
-The staged whitespace check reports inherited formatting warnings; every warning
-line was checked against and matches the original source. No new full-suite,
-clean-machine installation, packaged executable build, or real-employer submission
-was performed for this publication. GitHub CI has not been certified.
+Before public-source sanitisation, the integrated candidate's complete raw JUnit
+contained **3,093 passed, 2 skipped and 1 expected failure**, with no failures or
+errors, across **3,096 unique identities**. These counts were recomputed from
+that retained JUnit for this publication; they are not a new execution against
+the public export. The expected failure is the direct month-field case where a
+year alone is not valid `YYYY-MM` evidence.
 
-## Reproduce locally
+PyInstaller produced the executable successfully. Its separate fresh-sandbox
+smoke verified OFF mode, both live flags false, HTTP 200 for the dashboard and
+static assets, ownership of the listener, and teardown of the owned runtime.
+The candidate source stayed frozen. Public sanitisation and documented
+whitespace cleanup are separate from that binary's build provenance.
 
-Use a disposable environment, synthetic data and loopback destinations only.
-Do not run tests against an existing applicant database or browser handoff.
+## Authorised local installation
+
+The maintainer separately authorised installation. The previous executable and
+launcher wrapper were retained with verified hashes and the live SQLite database
+was backed up through SQLite's online-backup API. No keys or human browser
+profiles were copied. Empty handoffs and no unfinished automation runs were
+verified before the exact old ARGUS process tree was stopped.
+
+The effective Start Menu/Startup wrapper now launches the tested executable,
+not the stale source launcher. Installed and tested executable hashes match.
+The installed process owns the intended loopback listener; health is
+`REVIEW_ONLY`, `live_submit=false`, `trackr_live=false`. Periodic sweeps are set
+to zero for this installation posture. Dashboard/CSS/JavaScript return HTTP 200,
+and an isolated headless browser rendered the installed dashboard with no
+JavaScript page errors.
+
+Database integrity, schema version and every table's row count were unchanged.
+The current audit epoch remained valid. A retained historical audit-chain break
+was present before maintenance and is still reported; it was not rewritten or
+misrepresented as a new installation failure. Companion bridge processes were
+not replaced by this executable update.
+
+The browser-use transport timed out; the successful installed UI evidence came
+from the separate isolated Playwright check, not from that failed transport.
+A post-stop HTTP timeout also occurred in the maintenance helper; native process
+and listener checks proved shutdown before the staged replacement resumed.
+
+## Reproduction and remaining limits
+
+Use a disposable environment and synthetic loopback destinations only. Do not
+run tests against an existing applicant database or human browser handoff.
 
 ```text
 python -m pytest tests --collect-only -q -p no:cacheprovider
+python -m pytest tests --ignore=tests/e2e -q -p no:cacheprovider
 python scripts/privacy_scan.py --root .
 gitleaks dir . --redact --no-banner
+git diff --cached --check
 ```
 
-For runtime tests use `scripts.verify.safe_environment(Path.cwd())` as the child
-environment, `PYTHONDONTWRITEBYTECODE=1`, and a fresh external pytest `--basetemp`.
-The complete verification entry points are `scripts/verify.ps1` and
-`scripts/verify.sh`; running them is separate from the checks reported here.
+Set the safe child environment before importing ARGUS; use
+`scripts.verify.safe_environment(Path.cwd())` or an equivalently isolated
+launcher with fresh external data, temp and bytecode-cache roots. The full
+release entry points remain `scripts/verify.ps1` and `scripts/verify.sh`.
 
-Raw local logs and XML reports are retained outside this public repository because
-they contain workstation paths. Public source fixture names are synthetic. Private
-Git history, candidate documents, profiles, databases, keys, browser captures and
-backups are not part of this publication. Historical documents elsewhere in this
-repository are not fresh evidence for this revision.
+Real-employer ARGUS + Hermes operation has not been demonstrated by these
+checks. Interactive AI assistance is an intended operating model, but a
+notification backend is not proof of a working CUA form-filling connection.
+Upload-caller/handoff/manifest qualification, consolidated query-bearing target
+binding qualification, and a valid hard-process-crash receipt test remain
+separate outstanding evidence. No real application was submitted during this
+publication or installation.
+
+This repository has no configured GitHub Actions workflow; the reported checks
+are local execution, not a claim of passing GitHub CI. Raw local logs, manifests,
+JUnit, screenshots and installation backups remain outside the public tree to
+avoid publishing applicant data and workstation paths.

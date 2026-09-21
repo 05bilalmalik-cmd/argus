@@ -10,7 +10,7 @@ def eml(subject: str, body: str, *, sender: str = "recruiting@example.test") -> 
     message = EmailMessage()
     message["Message-ID"] = "<test-123@example.test>"
     message["From"] = sender
-    message["To"] = "alex@example.test"
+    message["To"] = "demo.candidate@example.test"
     message["Subject"] = subject
     message["Date"] = "Sat, 22 Aug 2026 09:30:00 +0100"
     message.set_content(body)

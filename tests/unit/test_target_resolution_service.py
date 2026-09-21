@@ -150,6 +150,10 @@ def test_record_promotes_only_identity_verified_application_entry(tmp_path: Path
             evidence={
                 "structured_feed": "greenhouse:acme",
                 "requisition": "1234",
+                "origin": "https://boards.greenhouse.io",
+                "employer": "Acme Capital",
+                "role": "Summer Analyst",
+                "form_identity": "1234",
             },
         )
 
@@ -183,7 +187,7 @@ def test_nested_urls_and_free_form_tokens_are_scrubbed_from_persisted_evidence(
             evidence={
                     "nested": {
                         "url": (
-                            "https://acme.test/apply?token=SECRET-TOKEN&email=alex@example.com"
+                            "https://acme.test/apply?token=SECRET-TOKEN&email=demo.candidate@example.test"
                         "&signature=SIGNATURE-SECRET&state=STATE-SECRET&code=OAUTH-CODE"
                         "&client_secret=CLIENT-SECRET&auth=AUTH-SECRET&ok=1"
                         ),
@@ -191,7 +195,7 @@ def test_nested_urls_and_free_form_tokens_are_scrubbed_from_persisted_evidence(
                         "Bearer secret-bearer-value api_token=plain-secret "
                         "signature=INLINE-SIGNATURE state=INLINE-STATE "
                         "code=INLINE-CODE client_secret=INLINE-CLIENT "
-                        "auth=INLINE-AUTH and alex@example.com"
+                        "auth=INLINE-AUTH and demo.candidate@example.test"
                     ),
                     "json_text": [
                         '{"auth":"JSON-AUTH","url":"https://acme.test/apply?auth=URL-AUTH&ok=1"}'
@@ -206,7 +210,7 @@ def test_nested_urls_and_free_form_tokens_are_scrubbed_from_persisted_evidence(
         assert "SECRET-TOKEN" not in persisted
         assert "secret-bearer-value" not in persisted
         assert "plain-secret" not in persisted
-        assert "alex@example.com" not in persisted
+        assert "demo.candidate@example.test" not in persisted
         for secret in (
             "SIGNATURE-SECRET",
             "STATE-SECRET",
@@ -240,13 +244,13 @@ def test_evidence_keys_are_scrubbed_when_they_contain_free_form_pii(
             final_url="https://boards.greenhouse.io/acme/jobs/1234",
             kind=TargetKind.APPLICATION_ENTRY,
             provider="greenhouse",
-            evidence={"contact_alex@example.com": {"token": "SECRET-TOKEN"}},
+            evidence={"demo.candidate@example.test": {"token": "SECRET-TOKEN"}},
         )
 
         TargetResolutionService(session).record(opportunity.id, result)
 
         persisted = opportunity.resolution_evidence_json
-        assert "alex@example.com" not in persisted
+        assert "demo.candidate@example.test" not in persisted
         assert "SECRET-TOKEN" not in persisted
 
 
@@ -272,6 +276,10 @@ def test_mismatch_attempt_preserves_previous_verified_target(tmp_path: Path) -> 
                 evidence={
                     "structured_feed": "greenhouse:acme",
                     "requisition": "1234",
+                    "origin": "https://boards.greenhouse.io",
+                    "employer": "Acme Capital",
+                    "role": "Summer Analyst",
+                    "form_identity": "1234",
                 },
             ),
         )
@@ -353,10 +361,14 @@ def test_repeated_failed_resolution_is_excluded_from_autopilot_until_reverified(
                 kind=TargetKind.APPLICATION_ENTRY,
                 provider="greenhouse",
                 identity_verified=True,
-                    evidence={
-                        "structured_feed": "greenhouse:acme",
-                        "requisition": "1234",
-                    },
+                evidence={
+                    "structured_feed": "greenhouse:acme",
+                    "requisition": "1234",
+                    "origin": "https://boards.greenhouse.io",
+                    "employer": "Acme Capital",
+                    "role": "Summer Analyst",
+                    "form_identity": "1234",
+                },
             ),
         )
         assert opportunity.automation_url == verified_url
@@ -423,6 +435,10 @@ def test_closed_target_invalidates_ready_state_and_stale_verified_url(
                 evidence={
                     "structured_feed": "greenhouse:acme",
                     "requisition": "1234",
+                    "origin": "https://boards.greenhouse.io",
+                    "employer": "Acme Capital",
+                    "role": "Summer Analyst",
+                    "form_identity": "1234",
                 },
             ),
         )
@@ -504,6 +520,10 @@ def test_api_serializes_source_and_verified_application_separately(tmp_path: Pat
                 evidence={
                     "structured_feed": "lever:acme",
                     "requisition": "9f73569e-952b-4c0a-b77c-d302846f15bd",
+                    "origin": "https://jobs.lever.co",
+                    "employer": "Acme Capital",
+                    "role": "Summer Analyst",
+                    "form_identity": "9f73569e-952b-4c0a-b77c-d302846f15bd",
                 },
             ),
         )
@@ -665,7 +685,7 @@ def test_record_round_trip_stamps_loader_identity_and_preserves_form_root_proof(
                     "root_selector": "#apply",
                     "control_count": 1,
                     "submit_present": True,
-                    "root_token": "root-application-00431",  # gitleaks:allow -- synthetic DOM-root identity, not an API token
+                    "root_token": "root-application-00431",  # gitleaks:allow -- synthetic DOM root identity, not a credential
                     "form_identity": "202700431",
                     "binding_verified": True,
                     "bound_target_url": final_url,
@@ -754,6 +774,7 @@ def test_sanitised_requisition_ids_and_encoded_query_urls_are_stable(tmp_path: P
                 "form_identity": "202700431",
                 "employer": opportunity.employer,
                 "role": opportunity.role_title,
+                "origin": "https://boards.greenhouse.io",
             },
         )
         recorded = TargetResolutionService(session).record(opportunity.id, result)
@@ -789,6 +810,7 @@ def test_placeholder_employer_is_established_from_verified_provider_identity(
                 "employer": "Acme Capital",
                 "role": opportunity.role_title,
                 "requisition": "1234",
+                "form_identity": "1234",
                 "application_origin": "https://boards.greenhouse.io",
             },
         )

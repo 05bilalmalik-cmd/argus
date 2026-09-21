@@ -214,6 +214,7 @@ class Settings:
     apply_click_timeout_ms: int
     role_match_v2_enabled: bool = False
     egress_impact_classification_enabled: bool = True
+    autopilot_skip_login_required: bool = True
     # Preserve the named environment authority separately from the effective
     # mode. Runtime UI posture changes may narrow `live_submit_enabled`, but
     # must never manufacture this restart-bound opt-in.
@@ -333,6 +334,10 @@ class Settings:
             ),
             egress_impact_classification_enabled=_parse_bool(
                 source.get("ARGUS_ENABLE_EGRESS_IMPACT_CLASSIFICATION"),
+                default=True,
+            ),
+            autopilot_skip_login_required=_parse_bool(
+                source.get("ARGUS_AUTOPILOT_SKIP_LOGIN_REQUIRED"),
                 default=True,
             ),
             live_submit_environment_enabled=legacy_live_submit_enabled,

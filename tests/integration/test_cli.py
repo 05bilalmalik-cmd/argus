@@ -201,7 +201,7 @@ def test_seed_real_requires_explicit_profile_and_does_not_print_identity(
 
     assert result.returncode == 2
     assert "explicit profile" in result.stderr.lower()
-    assert "alex" not in (result.stdout + result.stderr).lower()
+    assert "demo" not in (result.stdout + result.stderr).lower()
 
 
 def test_seed_real_accepts_profile_file_and_cv_root_without_identity_output(

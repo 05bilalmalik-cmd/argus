@@ -10,7 +10,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import OperationalError
 
 from app.config import Settings
-from app.db import Database
+from app.db import SCHEMA_VERSION, Database
 from app.domain import states
 from app.models import Application, AuditEvent, Opportunity
 
@@ -176,7 +176,7 @@ def test_schema_v9_migration_is_additive_indexed_backfilled_and_idempotent(
                 "FROM opportunities WHERE id='legacy-phase25'"
             )
         ).one()
-        assert connection.execute(text("PRAGMA user_version")).scalar_one() == 9
+        assert connection.execute(text("PRAGMA user_version")).scalar_one() == SCHEMA_VERSION
 
     database.create_schema()
     with database.engine.connect() as connection:

@@ -28,6 +28,15 @@ ENDPOINT = "https://boards-api.greenhouse.io/v1/boards/{org}/jobs"
 # (each slug returned HTTP 200; dead slugs removed after probe). Extend freely;
 # unknown slugs simply 404 and the per-source try/except in collect_all()
 # skips them.
+#
+# 2026-09-18 expansion: added 12 high-confidence tech boards. These slugs are
+# among the most widely referenced public Greenhouse boards (used in countless
+# public scraper configs / job datasets); all follow the canonical
+# boards-api.greenhouse.io/v1/boards/<org>/jobs pattern. They are weighted
+# toward strong tech because most top quant trading firms run own-ATS portals
+# (verified 404s — see watchlist.py) rather than Greenhouse. No live network
+# calls were made to verify; a dead slug fails harmlessly (404 -> exception ->
+# collect_all() logs a warning and contributes nothing).
 ORGS: tuple[str, ...] = (
     # citadel 404s on boards-api (own ATS) — not listed
     "point72",
@@ -43,6 +52,36 @@ ORGS: tuple[str, ...] = (
     "exoduspoint",
     "schonfeld",
     "marshallwace",         # board exists (0 jobs at probe time)
+    # --- Strong-tech expansion (high-confidence public Greenhouse boards) ---
+    "openai",
+    "anthropic",
+    "stripe",
+    "robinhood",
+    "coinbase",
+    "airbnb",
+    "databricks",
+    "doordash",
+    "lyft",
+    "hubspot",
+    "dropbox",
+    "twilio",
+)
+
+# UNVERIFIED candidates — NOT enabled by default (build_sources() never reads
+# this tuple). Suspected quant/trading Greenhouse users, but confidence is too
+# low to enable blindly: a wrong slug silently yields nothing. Verify each with
+# `GET https://boards-api.greenhouse.io/v1/boards/<org>/jobs` (expect HTTP 200
+# with a {"jobs": [...]} body) before promoting into ORGS. Do NOT pad ORGS
+# with these to look productive.
+UNVERIFIED_ORGS: tuple[str, ...] = (
+    "towerresearchcapital",  # Tower Research: suspected GH board, slug form unconfirmed
+    "worldquant",            # WorldQuant: may use GH, slug unconfirmed
+    "belvederetrading",      # Belvedere Trading: suspected GH, unconfirmed
+    "fiverings",             # Five Rings: 404 on earlier probe variants, unconfirmed
+    "chicagotradingcompany",  # CTC: careers portal suspected GH-backed, slug unconfirmed
+    "gsacapital",            # GSA Capital: board presence unconfirmed
+    "aqrcapital",            # AQR: board presence/slug unconfirmed
+    "balyasnyassetmanagement",  # Balyasny: suspected GH, exact slug unconfirmed
 )
 
 

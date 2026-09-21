@@ -25,14 +25,14 @@ def test_candidate_repository_upserts_single_active_profile(tmp_path: Path) -> N
     with db.session_scope() as session:
         repository = CandidateRepository(session)
         first = repository.upsert(
-            CandidateProfile(first_name="Alex", last_name="Sample", graduation_year=2029)
+            CandidateProfile(first_name="Demo", last_name="Candidate", graduation_year=2029)
         )
         second = repository.upsert(
-            CandidateProfile(first_name="Muhammad Alex", last_name="Sample", graduation_year=2029)
+            CandidateProfile(first_name="Muhammad Demo", last_name="Candidate", graduation_year=2029)
         )
 
         assert first.id == second.id == 1
-        assert repository.get().first_name == "Muhammad Alex"
+        assert repository.get().first_name == "Muhammad Demo"
 
 
 def test_opportunity_source_identity_dedupes_in_service_and_application_links_to_it(

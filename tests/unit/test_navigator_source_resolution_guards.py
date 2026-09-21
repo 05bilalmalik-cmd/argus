@@ -850,7 +850,7 @@ def test_greenhouse_runtime_allows_only_exact_presigned_field_bootstrap():
     assert lookalike.aborted == ["blockedbyclient"]
 
 
-def test_greenhouse_prefill_upload_is_bound_to_the_active_approved_document():
+def test_greenhouse_prefill_blocks_even_the_active_approved_document_upload():
     worker = HeadedSessionWorker(
         session_id="greenhouse-upload",
         application_id="application-1",
@@ -889,8 +889,10 @@ def test_greenhouse_prefill_upload_is_bound_to_the_active_approved_document():
         )
     )
     worker._route(upload)
-    assert upload.continued == 1
-    assert upload.aborted == []
+    assert upload.continued == 0
+    assert upload.aborted == ["blockedbyclient"]
+    assert worker._egress_records[-1]["reason"] == "prefill_mutating_request_blocked"
+    assert worker._egress_records[-1]["fatal"] is True
 
     wrong_file = _Route(
         _Request(

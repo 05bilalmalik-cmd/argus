@@ -11,6 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
+from app.automation.host_policy import origin_for_url
 from app.domain.targets import TargetKind, canonical_url_key, validate_navigation_url
 
 
@@ -33,7 +34,23 @@ _TRUSTED_PROVIDER_HOSTS: dict[str, frozenset[str]] = {
 _WORKDAY_HOST = re.compile(
     r"^[a-z0-9][a-z0-9-]*\.wd[0-9]+\.(?:myworkdayjobs|myworkdaysite)\.com$"
 )
-_KNOWN_PROVIDERS = frozenset({"greenhouse", "lever", "workday", "smartrecruiters", "workable"})
+_KNOWN_PROVIDERS = frozenset(
+    {
+        "greenhouse",
+        "lever",
+        "workday",
+        "smartrecruiters",
+        "workable",
+        "talentlink",
+        "oracle",
+        "cornerstone",
+        "talentview",
+        "recruitee",
+        "avature",
+        "breezy",
+        "icims",
+    }
+)
 _MAX_EVIDENCE_DEPTH = 20
 
 
@@ -269,24 +286,29 @@ def canonical_target_contract_url(value: str) -> str:
 def _custom_identity_evidence(
     provider: str, evidence: Mapping[str, Any], html: str = ""
 ) -> bool:
-    """Require independent ATS + employer/role + requisition/form proof."""
+    """Decide whether ``classify_target`` records a custom-domain detection.
+
+    The ``custom_domain_verified`` flag is written by the detector pipeline
+    after multi-provenance corroboration (URL plus vendor endpoint, for
+    example).  String values like ``"false"``, ``"0"``, ``"no"`` and HTML
+    marker matches are NOT independent provider proof and must not mark a
+    custom domain.  Note that even the exact boolean ``True`` here is
+    detection METADATA, not automation authority: no demonstrated producer
+    emits an independent custom-domain identity bundle, so
+    ``verified_for_automation`` keeps custom targets unverified and only
+    trusted-provider and exact synthetic-loopback targets verify.
+    """
 
     provider = _normalise_provider(provider)
-    markers = _html_providers(html)
     ats = _evidence_value(evidence, _ATS_EVIDENCE_KEYS)
     employer = _evidence_value(evidence, _EMPLOYER_EVIDENCE_KEYS)
     role = _evidence_value(evidence, _ROLE_EVIDENCE_KEYS)
     requisition_or_form = _evidence_value(
         evidence, _REQUISITION_EVIDENCE_KEYS | _FORM_EVIDENCE_KEYS
     )
-    # ``custom_domain_verified`` is written only by classify_target after the
-    # HTML marker and all identity fields have been checked.  It also makes a
-    # manually constructed resolution fail closed unless its caller presents
-    # the same explicit proof.
     ats_ok = ats.casefold() == provider if ats else False
-    marker_ok = bool(evidence.get("custom_domain_verified")) or (
-        bool(markers) and provider in markers
-    ) or ats_ok
+    # Only the exact boolean True from the detector pipeline marks a domain.
+    marker_ok = evidence.get("custom_domain_verified") is True
     return bool(provider and marker_ok and ats_ok and employer and role and requisition_or_form)
 
 
@@ -414,7 +436,43 @@ class TargetResolution:
             )
         if _is_loopback_url(self.final_url) and self.evidence.get("synthetic_lab") is True:
             return True
-        return _custom_identity_evidence(self.provider, self.evidence)
+        if not _custom_final_url_allowed(self.final_url, self.provider):
+            return False
+        # Custom-domain detection output is metadata, not automation
+        # authority.  No demonstrated producer emits an independent
+        # custom-domain identity bundle, and a caller- or page-authored
+        # ``custom_domain_verified`` boolean is not proof.  Custom targets
+        # therefore remain unverified for automation; trusted-provider and
+        # exact synthetic-loopback positives are unchanged.
+        return False
+
+
+def _custom_final_url_allowed(url: str, provider: str) -> bool:
+    """Require safe transport + supported provider before custom verification.
+
+    Detection metadata (page URL query params, vendor endpoints) stays in the
+    classifier; this gate keeps hand-authored HTTP, non-default-port, invalid,
+    or unknown-provider bundles from becoming automation proof. Trusted and
+    loopback positives return before this gate and are unchanged.
+    """
+
+    if _normalise_provider(provider) not in _KNOWN_PROVIDERS:
+        return False
+    try:
+        parts = urlsplit(validate_navigation_url(url))
+    except (TypeError, ValueError):
+        return False
+    if parts.scheme.casefold() != "https":
+        return False
+    if parts.username is not None or parts.password is not None:
+        return False
+    if parts.port not in {None, 443}:
+        return False
+    try:
+        origin_for_url(url)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _resolution_identity_text(value: object) -> str:
@@ -596,6 +654,34 @@ def validate_target_resolution_contract(resolution: TargetResolution) -> None:
             if "contradict" in str(exc):
                 raise
             raise ValueError("Target resolution bound target URL evidence is malformed") from exc
+
+    # Form actions are executable destinations. Resolve every action against
+    # the verified final URL with the exact canonical origin helper: relative
+    # same-origin actions and valid empty actions pass; absolute or
+    # protocol-relative cross-origin actions, non-HTTP(S) schemes, embedded
+    # credentials, and malformed URLs fail closed. No string "://" shortcut.
+    # origin_for_url() maps wss->https, so a same-origin websocket action
+    # would otherwise compare equal; require the explicit HTTP(S) scheme and
+    # string typing before the origin comparison, and reject every other
+    # malformed non-empty action value.
+    for node in _resolution_mapping_nodes(evidence):
+        for raw_key, raw_value in node.items():
+            if normalise_evidence_key(raw_key) not in {"action", "formaction"}:
+                continue
+            if isinstance(raw_value, str) and not raw_value.strip():
+                continue
+            if not isinstance(raw_value, str):
+                raise ValueError("Target resolution form action evidence is malformed")
+            try:
+                resolved_action = urljoin(resolution.final_url, raw_value.strip())
+                if urlsplit(resolved_action).scheme.casefold() not in {"http", "https"}:
+                    raise ValueError("Target resolution form action escapes the verified origin")
+                if origin_for_url(resolved_action) != expected_origin:
+                    raise ValueError("Target resolution form action escapes the verified origin")
+            except ValueError as exc:
+                if "escapes" in str(exc):
+                    raise
+                raise ValueError("Target resolution form action evidence is malformed") from exc
 
     form_contract = False
     for node in _resolution_mapping_nodes(evidence):
@@ -1089,6 +1175,1318 @@ def _greenhouse_embed_form_proof(
     return form_proof, form_evidence, ""
 
 
+_GREENHOUSE_CUSTOM_DOMAIN_HOSTS = frozenset(
+    {
+        "boards.greenhouse.io",
+        "job-boards.greenhouse.io",
+        "job-boards.eu.greenhouse.io",
+        "grnh.se",
+    }
+)
+
+
+def _detect_greenhouse_custom_domain(
+    final_url: str, html: str, evidence: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Detect Greenhouse on a custom domain with strong positive evidence.
+
+    Requires signals from at least 2 different provenance classes:
+    - URL: the resolved/navigated URL carries a Greenhouse parameter.
+    - Vendor endpoint: a form/iframe action resolves to a Greenhouse-owned host.
+    - Body: inert page-controlled content such as links, text, or DOM attributes.
+
+    Two body signals are deliberately only one class.  A page author controls
+    both a link and its DOM attributes, so counting them as independent would
+    let a spoofed page self-attest as Greenhouse.
+
+    A single weak marker (e.g. only "greenhouse" in body text, or only gh_src)
+    is NOT sufficient. This prevents false positives on marketing pages that
+    merely mention Greenhouse.
+    """
+    parts = urlsplit(final_url)
+    query_params = dict(parse_qsl(parts.query, keep_blank_values=True))
+
+    soup = BeautifulSoup(str(html or "")[:200_000], "html.parser")
+
+    signals: dict[str, bool] = {
+        "gh_query_param": False,
+        "grnh_se_link": False,
+        "greenhouse_iframe": False,
+        "greenhouse_form_action": False,
+        "greenhouse_dom_marker": False,
+        "greenhouse_board_token": False,
+    }
+
+    # Provenance class URL: only the resolved URL itself.
+    if "gh_jid" in query_params or "gh_src" in query_params:
+        signals["gh_query_param"] = True
+
+    # Provenance class BODY: inert page-controlled links.  Resolve first and
+    # require an exact Greenhouse-owned host; substring matching is unsafe.
+    for link in soup.select("a[href]"):
+        href = link.get("href", "")
+        try:
+            link_url = urljoin(final_url, href)
+            link_parts = urlsplit(link_url)
+            if (
+                link_parts.scheme.casefold() == "https"
+                and link_parts.port in {None, 443}
+                and (link_parts.hostname or "").casefold().rstrip(".")
+                in _GREENHOUSE_CUSTOM_DOMAIN_HOSTS
+            ):
+                signals["grnh_se_link"] = True
+                break
+        except ValueError:
+            continue
+
+    # Provenance class VENDOR_ENDPOINT: executable form/iframe destinations.
+    def is_greenhouse_endpoint(value: str) -> bool:
+        try:
+            endpoint = urlsplit(urljoin(final_url, value))
+            return (
+                endpoint.scheme.casefold() == "https"
+                and endpoint.port in {None, 443}
+                and (endpoint.hostname or "").casefold().rstrip(".")
+                in _GREENHOUSE_CUSTOM_DOMAIN_HOSTS
+            )
+        except ValueError:
+            return False
+
+    for iframe in soup.select("iframe[src]"):
+        if is_greenhouse_endpoint(iframe.get("src", "")):
+            signals["greenhouse_iframe"] = True
+            break
+
+    for form in soup.select("form[action]"):
+        if is_greenhouse_endpoint(form.get("action", "")):
+            signals["greenhouse_form_action"] = True
+            break
+
+    # Provenance class BODY: DOM markers are page-controlled and must not be
+    # counted separately from links or other inert body content.
+    greenhouse_dom_attrs = [
+        "data-org",
+        "data-organization",
+        "data-company-slug",
+        "data-board",
+        "data-greenhouse-token",
+        "data-job-post-id",
+        "data-requisition",
+        "data-token",
+        "data-job-id",
+        "data-employer",
+        "data-company",
+        "data-company-name",
+        "data-role",
+        "data-role-title",
+        "data-job-title",
+    ]
+    for attr in greenhouse_dom_attrs:
+        if soup.select(f"[{attr}]"):
+            signals["greenhouse_dom_marker"] = True
+            break
+
+    # More BODY evidence: board token / requisition in page DOM.  It remains
+    # useful as a signal, but shares provenance with every other body marker.
+    board_token_selectors = [
+        "[data-greenhouse-token]",
+        "[data-board-token]",
+        "[data-job-id]",
+        "[data-requisition]",
+        "[data-job-post-id]",
+        "meta[name*='greenhouse']",
+    ]
+    for selector in board_token_selectors:
+        elements = soup.select(selector)
+        for el in elements:
+            # Check if element has a value attribute or content
+            val = el.get("value") or el.get("content") or el.get("data-greenhouse-token") or el.get("data-board-token") or el.get("data-job-id") or el.get("data-requisition") or el.get("data-job-post-id")
+            if val and str(val).strip():
+                signals["greenhouse_board_token"] = True
+                break
+        if signals["greenhouse_board_token"]:
+            break
+
+    provenance = {
+        "url": signals["gh_query_param"],
+        "vendor_endpoint": signals["greenhouse_iframe"]
+        or signals["greenhouse_form_action"],
+        "body": signals["grnh_se_link"]
+        or signals["greenhouse_dom_marker"]
+        or signals["greenhouse_board_token"],
+    }
+
+    if sum(provenance.values()) >= 2:
+        return {
+            "custom_domain_verified": True,
+            "greenhouse_custom_domain_signals": signals,
+            "greenhouse_custom_domain_provenance": provenance,
+        }
+    return None
+
+
+_TALENTLINK_CUSTOM_DOMAIN_HOSTS = frozenset(
+    {
+        "tal.net",
+        "www.tal.net",
+    }
+)
+
+
+def _is_talentlink_host(hostname: str) -> bool:
+    """Strict vendor-host check: exact tal.net or a *.tal.net subdomain."""
+    host = (hostname or "").casefold().rstrip(".")
+    return host == "tal.net" or host.endswith(".tal.net")
+
+
+def _detect_talentlink_custom_domain(
+    final_url: str, html: str, evidence: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Detect TalentLink on a custom domain with strong positive evidence.
+
+    Requires signals from at least 2 different provenance classes (copied
+    from the hardened Greenhouse detector):
+    - URL: the resolved/navigated URL itself lives on a TalentLink-owned host.
+    - Vendor endpoint: a form/iframe action resolves to a TalentLink-owned host.
+    - Body: inert page-controlled content such as links, DOM attributes, or
+      requisition markers.  All body signals share ONE provenance class, so
+      two body signals are never enough: a hostile page can manufacture both
+      without ever touching the vendor.
+
+    DOM markers are vendor-specific (``data-talentlink`` / ``data-tal-*``).
+    Generic attributes such as ``data-requisition-id`` are deliberately NOT
+    signals: every vendor page carries them, so they cannot attribute identity.
+    """
+    parts = urlsplit(final_url)
+    host = (parts.hostname or "").casefold().rstrip(".")
+
+    soup = BeautifulSoup(str(html or "")[:200_000], "html.parser")
+
+    signals: dict[str, bool] = {
+        "talentlink_host_url": False,
+        "talentlink_link": False,
+        "talentlink_iframe": False,
+        "talentlink_form_action": False,
+        "talentlink_dom_marker": False,
+        "talentlink_requisition": False,
+    }
+
+    # Provenance class URL: only the resolved URL itself.
+    if _is_talentlink_host(host):
+        signals["talentlink_host_url"] = True
+
+    def is_talentlink_endpoint(value: str) -> bool:
+        try:
+            endpoint = urlsplit(urljoin(final_url, value))
+            return (
+                endpoint.scheme.casefold() == "https"
+                and endpoint.port in {None, 443}
+                and _is_talentlink_host(endpoint.hostname or "")
+            )
+        except ValueError:
+            return False
+
+    # Provenance class BODY: inert page-controlled links.  Resolve first and
+    # require an exact TalentLink-owned host; substring matching is unsafe.
+    for link in soup.select("a[href]"):
+        try:
+            if is_talentlink_endpoint(link.get("href", "")):
+                signals["talentlink_link"] = True
+                break
+        except ValueError:
+            continue
+
+    # Provenance class VENDOR_ENDPOINT: executable form/iframe destinations.
+    for iframe in soup.select("iframe[src]"):
+        if is_talentlink_endpoint(iframe.get("src", "")):
+            signals["talentlink_iframe"] = True
+            break
+
+    for form in soup.select("form[action]"):
+        if is_talentlink_endpoint(form.get("action", "")):
+            signals["talentlink_form_action"] = True
+            break
+
+    # Provenance class BODY: vendor-specific DOM markers are page-controlled
+    # and share provenance with every other body signal.
+    if soup.select("[data-talentlink]"):
+        signals["talentlink_dom_marker"] = True
+    else:
+        for el in soup.find_all():
+            for attr_name in el.attrs:
+                if attr_name.startswith("data-tal-"):
+                    signals["talentlink_dom_marker"] = True
+                    break
+            if signals["talentlink_dom_marker"]:
+                break
+    if not signals["talentlink_dom_marker"]:
+        for el in soup.select("[class*='talentlink'], [id*='talentlink']"):
+            if el.get("class") or el.get("id"):
+                signals["talentlink_dom_marker"] = True
+                break
+
+    # More BODY evidence: vendor-specific requisition identity with a value.
+    requisition_selectors = [
+        "[data-tal-requisition-id]",
+        "[data-tal-job-id]",
+        "[data-tal-vacancy-id]",
+        "[data-tal-role-id]",
+        "meta[name*='tal-requisition']",
+        "meta[name*='tal-vacancy']",
+        "meta[name*='tal-job']",
+    ]
+    requisition_attrs = (
+        "data-tal-requisition-id",
+        "data-tal-job-id",
+        "data-tal-vacancy-id",
+        "data-tal-role-id",
+    )
+    for selector in requisition_selectors:
+        for el in soup.select(selector):
+            val = el.get("value") or el.get("content")
+            if val is None:
+                for attr in requisition_attrs:
+                    val = el.get(attr)
+                    if val:
+                        break
+            if val and str(val).strip():
+                signals["talentlink_requisition"] = True
+                break
+        if signals["talentlink_requisition"]:
+            break
+
+    provenance = {
+        "url": signals["talentlink_host_url"],
+        "vendor_endpoint": signals["talentlink_iframe"]
+        or signals["talentlink_form_action"],
+        "body": signals["talentlink_link"]
+        or signals["talentlink_dom_marker"]
+        or signals["talentlink_requisition"],
+    }
+
+    if sum(provenance.values()) >= 2:
+        return {
+            "custom_domain_verified": True,
+            "talentlink_custom_domain_signals": signals,
+            "talentlink_custom_domain_provenance": provenance,
+        }
+    return None
+
+
+_ORACLE_HCM_CUSTOM_DOMAIN_HOSTS = frozenset(
+    {
+        "oraclecloud.com",
+        "fa.oraclecloud.com",
+        "fa.em.oraclecloud.com",
+        "fa.em2.oraclecloud.com",
+        "fa.us2.oraclecloud.com",
+        "fa.ocs.oraclecloud.com",
+    }
+)
+
+
+def _is_oracle_hcm_host(hostname: str) -> bool:
+    """Strict vendor-host check: exact oraclecloud.com or a subdomain.
+
+    Substring matching (``"oraclecloud.com" in host``) is unsafe:
+    ``evil-oraclecloud.com.attacker.test`` contains the substring without
+    being vendor-owned.  Only exact-or-suffix matches count.
+    """
+    host = (hostname or "").casefold().rstrip(".")
+    return host == "oraclecloud.com" or host.endswith(".oraclecloud.com")
+
+
+def _detect_oracle_hcm_custom_domain(
+    final_url: str, html: str, evidence: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Detect Oracle HCM on a custom domain with strong positive evidence.
+
+    Requires signals from at least 2 different provenance classes (copied
+    from the hardened Greenhouse detector):
+    - URL: the resolved/navigated URL itself lives on an Oracle-owned host.
+    - Vendor endpoint: a form/iframe action resolves to an Oracle-owned host.
+    - Body: inert page-controlled content such as links, DOM attributes, or
+      requisition markers.  All body signals share ONE provenance class, so
+      two body signals are never enough.
+
+    DOM markers are vendor-specific (``data-oracle-*`` / ``data-hcm-*``).
+    Generic attributes such as ``data-requisition-id`` are deliberately NOT
+    signals: every vendor page carries them, so they cannot attribute identity.
+    """
+    parts = urlsplit(final_url)
+    host = (parts.hostname or "").casefold().rstrip(".")
+
+    soup = BeautifulSoup(str(html or "")[:200_000], "html.parser")
+
+    signals: dict[str, bool] = {
+        "oracle_host_url": False,
+        "oracle_link": False,
+        "oracle_iframe": False,
+        "oracle_form_action": False,
+        "oracle_dom_marker": False,
+        "oracle_requisition": False,
+    }
+
+    # Provenance class URL: only the resolved URL itself.
+    if _is_oracle_hcm_host(host):
+        signals["oracle_host_url"] = True
+
+    def is_oracle_endpoint(value: str) -> bool:
+        try:
+            endpoint = urlsplit(urljoin(final_url, value))
+            return (
+                endpoint.scheme.casefold() == "https"
+                and endpoint.port in {None, 443}
+                and _is_oracle_hcm_host(endpoint.hostname or "")
+            )
+        except ValueError:
+            return False
+
+    # Provenance class BODY: inert page-controlled links.  Resolve first and
+    # require an Oracle-owned host; substring matching is unsafe.
+    for link in soup.select("a[href]"):
+        try:
+            if is_oracle_endpoint(link.get("href", "")):
+                signals["oracle_link"] = True
+                break
+        except ValueError:
+            continue
+
+    # Provenance class VENDOR_ENDPOINT: executable form/iframe destinations.
+    for iframe in soup.select("iframe[src]"):
+        if is_oracle_endpoint(iframe.get("src", "")):
+            signals["oracle_iframe"] = True
+            break
+
+    for form in soup.select("form[action]"):
+        if is_oracle_endpoint(form.get("action", "")):
+            signals["oracle_form_action"] = True
+            break
+
+    # Provenance class BODY: vendor-specific DOM markers are page-controlled
+    # and share provenance with every other body signal.
+    for el in soup.find_all():
+        for attr_name in el.attrs:
+            if attr_name.startswith("data-oracle-") or attr_name.startswith("data-hcm-"):
+                signals["oracle_dom_marker"] = True
+                break
+        if signals["oracle_dom_marker"]:
+            break
+    if not signals["oracle_dom_marker"]:
+        for el in soup.select("[class*='oracle'], [id*='oracle']"):
+            if el.get("class") or el.get("id"):
+                signals["oracle_dom_marker"] = True
+                break
+
+    # More BODY evidence: vendor-specific requisition identity with a value.
+    requisition_selectors = [
+        "[data-oracle-requisition-id]",
+        "[data-oracle-job-id]",
+        "[data-oracle-posting-id]",
+        "[data-hcm-requisition-id]",
+        "[data-hcm-job-id]",
+        "meta[name*='oracle-requisition']",
+        "meta[name*='hcm-requisition']",
+        "meta[name*='oracle-posting']",
+    ]
+    requisition_attrs = (
+        "data-oracle-requisition-id",
+        "data-oracle-job-id",
+        "data-oracle-posting-id",
+        "data-hcm-requisition-id",
+        "data-hcm-job-id",
+    )
+    for selector in requisition_selectors:
+        for el in soup.select(selector):
+            val = el.get("value") or el.get("content")
+            if val is None:
+                for attr in requisition_attrs:
+                    val = el.get(attr)
+                    if val:
+                        break
+            if val and str(val).strip():
+                signals["oracle_requisition"] = True
+                break
+        if signals["oracle_requisition"]:
+            break
+
+    provenance = {
+        "url": signals["oracle_host_url"],
+        "vendor_endpoint": signals["oracle_iframe"]
+        or signals["oracle_form_action"],
+        "body": signals["oracle_link"]
+        or signals["oracle_dom_marker"]
+        or signals["oracle_requisition"],
+    }
+
+    if sum(provenance.values()) >= 2:
+        return {
+            "custom_domain_verified": True,
+            "oracle_hcm_custom_domain_signals": signals,
+            "oracle_hcm_custom_domain_provenance": provenance,
+        }
+    return None
+
+
+_CORNERSTONE_CUSTOM_DOMAIN_HOSTS = frozenset(
+    {
+        "csod.com",
+        "www.csod.com",
+    }
+)
+
+
+def _is_cornerstone_host(hostname: str) -> bool:
+    """Strict vendor-host check: exact csod.com or a *.csod.com subdomain."""
+    host = (hostname or "").casefold().rstrip(".")
+    return host == "csod.com" or host.endswith(".csod.com")
+
+
+def _detect_cornerstone_custom_domain(
+    final_url: str, html: str, evidence: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Detect Cornerstone (CSOD) on a custom domain with strong positive evidence.
+
+    Requires signals from at least 2 different provenance classes (copied
+    from the hardened Greenhouse detector):
+    - URL: the resolved/navigated URL itself lives on a Cornerstone-owned host.
+    - Vendor endpoint: a form/iframe action resolves to a Cornerstone-owned host.
+    - Body: inert page-controlled content such as links, DOM attributes, or
+      requisition markers.  All body signals share ONE provenance class, so
+      two body signals are never enough.
+
+    DOM markers are vendor-specific (``data-csod-*`` / ``data-cornerstone-*``).
+    Generic attributes such as ``data-requisition-id`` are deliberately NOT
+    signals: every vendor page carries them, so they cannot attribute identity.
+    """
+    parts = urlsplit(final_url)
+    host = (parts.hostname or "").casefold().rstrip(".")
+
+    soup = BeautifulSoup(str(html or "")[:200_000], "html.parser")
+
+    signals: dict[str, bool] = {
+        "cornerstone_host_url": False,
+        "cornerstone_link": False,
+        "cornerstone_iframe": False,
+        "cornerstone_form_action": False,
+        "cornerstone_dom_marker": False,
+        "cornerstone_requisition": False,
+    }
+
+    # Provenance class URL: only the resolved URL itself.
+    if _is_cornerstone_host(host):
+        signals["cornerstone_host_url"] = True
+
+    def is_cornerstone_endpoint(value: str) -> bool:
+        try:
+            endpoint = urlsplit(urljoin(final_url, value))
+            return (
+                endpoint.scheme.casefold() == "https"
+                and endpoint.port in {None, 443}
+                and _is_cornerstone_host(endpoint.hostname or "")
+            )
+        except ValueError:
+            return False
+
+    # Provenance class BODY: inert page-controlled links.  Resolve first and
+    # require a Cornerstone-owned host; substring matching is unsafe.
+    for link in soup.select("a[href]"):
+        try:
+            if is_cornerstone_endpoint(link.get("href", "")):
+                signals["cornerstone_link"] = True
+                break
+        except ValueError:
+            continue
+
+    # Provenance class VENDOR_ENDPOINT: executable form/iframe destinations.
+    for iframe in soup.select("iframe[src]"):
+        if is_cornerstone_endpoint(iframe.get("src", "")):
+            signals["cornerstone_iframe"] = True
+            break
+
+    for form in soup.select("form[action]"):
+        if is_cornerstone_endpoint(form.get("action", "")):
+            signals["cornerstone_form_action"] = True
+            break
+
+    # Provenance class BODY: vendor-specific DOM markers are page-controlled
+    # and share provenance with every other body signal.
+    for el in soup.find_all():
+        for attr_name in el.attrs:
+            if attr_name.startswith("data-csod-") or attr_name.startswith("data-cornerstone-"):
+                signals["cornerstone_dom_marker"] = True
+                break
+        if signals["cornerstone_dom_marker"]:
+            break
+    if not signals["cornerstone_dom_marker"]:
+        for el in soup.select("[class*='csod'], [id*='csod'], [class*='cornerstone'], [id*='cornerstone']"):
+            if el.get("class") or el.get("id"):
+                signals["cornerstone_dom_marker"] = True
+                break
+
+    # More BODY evidence: vendor-specific requisition identity with a value.
+    requisition_selectors = [
+        "[data-csod-requisition-id]",
+        "[data-csod-job-id]",
+        "[data-csod-posting-id]",
+        "[data-cornerstone-requisition-id]",
+        "[data-cornerstone-job-id]",
+        "meta[name*='csod-requisition']",
+        "meta[name*='cornerstone-requisition']",
+        "meta[name*='csod-posting']",
+    ]
+    requisition_attrs = (
+        "data-csod-requisition-id",
+        "data-csod-job-id",
+        "data-csod-posting-id",
+        "data-cornerstone-requisition-id",
+        "data-cornerstone-job-id",
+    )
+    for selector in requisition_selectors:
+        for el in soup.select(selector):
+            val = el.get("value") or el.get("content")
+            if val is None:
+                for attr in requisition_attrs:
+                    val = el.get(attr)
+                    if val:
+                        break
+            if val and str(val).strip():
+                signals["cornerstone_requisition"] = True
+                break
+        if signals["cornerstone_requisition"]:
+            break
+
+    provenance = {
+        "url": signals["cornerstone_host_url"],
+        "vendor_endpoint": signals["cornerstone_iframe"]
+        or signals["cornerstone_form_action"],
+        "body": signals["cornerstone_link"]
+        or signals["cornerstone_dom_marker"]
+        or signals["cornerstone_requisition"],
+    }
+
+    if sum(provenance.values()) >= 2:
+        return {
+            "custom_domain_verified": True,
+            "cornerstone_custom_domain_signals": signals,
+            "cornerstone_custom_domain_provenance": provenance,
+        }
+    return None
+
+
+_TALENTVIEW_CUSTOM_DOMAIN_HOSTS = frozenset(
+    {
+        "talentview.io",
+        "www.talentview.io",
+    }
+)
+
+
+def _is_talentview_host(hostname: str) -> bool:
+    """Strict vendor-host check: exact talentview.io or a subdomain."""
+    host = (hostname or "").casefold().rstrip(".")
+    return host == "talentview.io" or host.endswith(".talentview.io")
+
+
+def _detect_talentview_custom_domain(
+    final_url: str, html: str, evidence: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Detect TalentView on a custom domain with strong positive evidence.
+
+    Requires signals from at least 2 different provenance classes (copied
+    from the hardened Greenhouse detector):
+    - URL: the resolved/navigated URL itself lives on a TalentView-owned host.
+    - Vendor endpoint: a form/iframe action resolves to a TalentView-owned host.
+    - Body: inert page-controlled content such as links, DOM attributes, or
+      requisition markers.  All body signals share ONE provenance class, so
+      two body signals are never enough.
+
+    DOM markers are vendor-specific (``data-talentview-*`` / ``data-tv-*``).
+    Generic attributes such as ``data-job-id`` are deliberately NOT signals:
+    every vendor page carries them, so they cannot attribute identity.
+    """
+    parts = urlsplit(final_url)
+    host = (parts.hostname or "").casefold().rstrip(".")
+
+    soup = BeautifulSoup(str(html or "")[:200_000], "html.parser")
+
+    signals: dict[str, bool] = {
+        "talentview_host_url": False,
+        "talentview_link": False,
+        "talentview_iframe": False,
+        "talentview_form_action": False,
+        "talentview_dom_marker": False,
+        "talentview_requisition": False,
+    }
+
+    # Provenance class URL: only the resolved URL itself.
+    if _is_talentview_host(host):
+        signals["talentview_host_url"] = True
+
+    def is_talentview_endpoint(value: str) -> bool:
+        try:
+            endpoint = urlsplit(urljoin(final_url, value))
+            return (
+                endpoint.scheme.casefold() == "https"
+                and endpoint.port in {None, 443}
+                and _is_talentview_host(endpoint.hostname or "")
+            )
+        except ValueError:
+            return False
+
+    # Provenance class BODY: inert page-controlled links.  Resolve first and
+    # require a TalentView-owned host; substring matching is unsafe.
+    for link in soup.select("a[href]"):
+        try:
+            if is_talentview_endpoint(link.get("href", "")):
+                signals["talentview_link"] = True
+                break
+        except ValueError:
+            continue
+
+    # Provenance class VENDOR_ENDPOINT: executable form/iframe destinations.
+    for iframe in soup.select("iframe[src]"):
+        if is_talentview_endpoint(iframe.get("src", "")):
+            signals["talentview_iframe"] = True
+            break
+
+    for form in soup.select("form[action]"):
+        if is_talentview_endpoint(form.get("action", "")):
+            signals["talentview_form_action"] = True
+            break
+
+    # Provenance class BODY: vendor-specific DOM markers are page-controlled
+    # and share provenance with every other body signal.
+    for el in soup.find_all():
+        for attr_name in el.attrs:
+            if attr_name.startswith("data-talentview-") or attr_name.startswith("data-tv-"):
+                signals["talentview_dom_marker"] = True
+                break
+        if signals["talentview_dom_marker"]:
+            break
+    if not signals["talentview_dom_marker"]:
+        for el in soup.select("[class*='talentview'], [id*='talentview']"):
+            if el.get("class") or el.get("id"):
+                signals["talentview_dom_marker"] = True
+                break
+
+    # More BODY evidence: vendor-specific requisition identity with a value.
+    requisition_selectors = [
+        "[data-tv-requisition-id]",
+        "[data-tv-job-id]",
+        "[data-tv-posting-id]",
+        "[data-talentview-requisition-id]",
+        "[data-talentview-job-id]",
+        "meta[name*='tv-requisition']",
+        "meta[name*='talentview-requisition']",
+        "meta[name*='tv-posting']",
+    ]
+    requisition_attrs = (
+        "data-tv-requisition-id",
+        "data-tv-job-id",
+        "data-tv-posting-id",
+        "data-talentview-requisition-id",
+        "data-talentview-job-id",
+    )
+    for selector in requisition_selectors:
+        for el in soup.select(selector):
+            val = el.get("value") or el.get("content")
+            if val is None:
+                for attr in requisition_attrs:
+                    val = el.get(attr)
+                    if val:
+                        break
+            if val and str(val).strip():
+                signals["talentview_requisition"] = True
+                break
+        if signals["talentview_requisition"]:
+            break
+
+    provenance = {
+        "url": signals["talentview_host_url"],
+        "vendor_endpoint": signals["talentview_iframe"]
+        or signals["talentview_form_action"],
+        "body": signals["talentview_link"]
+        or signals["talentview_dom_marker"]
+        or signals["talentview_requisition"],
+    }
+
+    if sum(provenance.values()) >= 2:
+        return {
+            "custom_domain_verified": True,
+            "talentview_custom_domain_signals": signals,
+            "talentview_custom_domain_provenance": provenance,
+        }
+    return None
+
+
+_RECRUITEE_CUSTOM_DOMAIN_HOSTS = frozenset(
+    {
+        "recruitee.com",
+        "www.recruitee.com",
+        "api.recruitee.com",
+    }
+)
+
+
+def _is_recruitee_host(hostname: str) -> bool:
+    """Strict vendor-host check: exact recruitee.com or a subdomain."""
+    host = (hostname or "").casefold().rstrip(".")
+    return host == "recruitee.com" or host.endswith(".recruitee.com")
+
+
+def _detect_recruitee_custom_domain(
+    final_url: str, html: str, evidence: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Detect Recruitee on a custom domain with strong positive evidence.
+
+    Requires signals from at least 2 different provenance classes (copied
+    from the hardened Greenhouse detector):
+    - URL: the resolved/navigated URL itself lives on a Recruitee-owned host.
+    - Vendor endpoint: a form/iframe action resolves to a Recruitee-owned host.
+    - Body: inert page-controlled content such as links, DOM attributes, or
+      requisition markers.  All body signals share ONE provenance class, so
+      two body signals are never enough.
+
+    DOM markers are vendor-specific (``data-recruitee-*`` / ``data-rct-*``).
+    Generic attributes such as ``data-offer-id`` are deliberately NOT signals:
+    every vendor page carries them, so they cannot attribute identity.
+    """
+    parts = urlsplit(final_url)
+    host = (parts.hostname or "").casefold().rstrip(".")
+
+    soup = BeautifulSoup(str(html or "")[:200_000], "html.parser")
+
+    signals: dict[str, bool] = {
+        "recruitee_host_url": False,
+        "recruitee_link": False,
+        "recruitee_iframe": False,
+        "recruitee_form_action": False,
+        "recruitee_dom_marker": False,
+        "recruitee_requisition": False,
+    }
+
+    # Provenance class URL: only the resolved URL itself.
+    if _is_recruitee_host(host):
+        signals["recruitee_host_url"] = True
+
+    def is_recruitee_endpoint(value: str) -> bool:
+        try:
+            endpoint = urlsplit(urljoin(final_url, value))
+            return (
+                endpoint.scheme.casefold() == "https"
+                and endpoint.port in {None, 443}
+                and _is_recruitee_host(endpoint.hostname or "")
+            )
+        except ValueError:
+            return False
+
+    # Provenance class BODY: inert page-controlled links.  Resolve first and
+    # require a Recruitee-owned host; substring matching is unsafe.
+    for link in soup.select("a[href]"):
+        try:
+            if is_recruitee_endpoint(link.get("href", "")):
+                signals["recruitee_link"] = True
+                break
+        except ValueError:
+            continue
+
+    # Provenance class VENDOR_ENDPOINT: executable form/iframe destinations.
+    for iframe in soup.select("iframe[src]"):
+        if is_recruitee_endpoint(iframe.get("src", "")):
+            signals["recruitee_iframe"] = True
+            break
+
+    for form in soup.select("form[action]"):
+        if is_recruitee_endpoint(form.get("action", "")):
+            signals["recruitee_form_action"] = True
+            break
+
+    # Provenance class BODY: vendor-specific DOM markers are page-controlled
+    # and share provenance with every other body signal.
+    for el in soup.find_all():
+        for attr_name in el.attrs:
+            if attr_name.startswith("data-recruitee-") or attr_name.startswith("data-rct-"):
+                signals["recruitee_dom_marker"] = True
+                break
+        if signals["recruitee_dom_marker"]:
+            break
+    if not signals["recruitee_dom_marker"]:
+        for el in soup.select("[class*='recruitee'], [id*='recruitee']"):
+            if el.get("class") or el.get("id"):
+                signals["recruitee_dom_marker"] = True
+                break
+
+    # More BODY evidence: vendor-specific requisition identity with a value.
+    requisition_selectors = [
+        "[data-recruitee-offer-id]",
+        "[data-recruitee-job-id]",
+        "[data-rct-offer-id]",
+        "[data-rct-job-id]",
+        "meta[name*='recruitee-offer']",
+        "meta[name*='recruitee-job']",
+    ]
+    requisition_attrs = (
+        "data-recruitee-offer-id",
+        "data-recruitee-job-id",
+        "data-rct-offer-id",
+        "data-rct-job-id",
+    )
+    for selector in requisition_selectors:
+        for el in soup.select(selector):
+            val = el.get("value") or el.get("content")
+            if val is None:
+                for attr in requisition_attrs:
+                    val = el.get(attr)
+                    if val:
+                        break
+            if val and str(val).strip():
+                signals["recruitee_requisition"] = True
+                break
+        if signals["recruitee_requisition"]:
+            break
+
+    provenance = {
+        "url": signals["recruitee_host_url"],
+        "vendor_endpoint": signals["recruitee_iframe"]
+        or signals["recruitee_form_action"],
+        "body": signals["recruitee_link"]
+        or signals["recruitee_dom_marker"]
+        or signals["recruitee_requisition"],
+    }
+
+    if sum(provenance.values()) >= 2:
+        return {
+            "custom_domain_verified": True,
+            "recruitee_custom_domain_signals": signals,
+            "recruitee_custom_domain_provenance": provenance,
+        }
+    return None
+
+
+_AVATURE_CUSTOM_DOMAIN_HOSTS = frozenset(
+    {
+        "avature.net",
+        "www.avature.net",
+    }
+)
+
+
+def _is_avature_host(hostname: str) -> bool:
+    """Strict vendor-host check: exact avature.net or a *.avature.net subdomain."""
+    host = (hostname or "").casefold().rstrip(".")
+    return host == "avature.net" or host.endswith(".avature.net")
+
+
+def _detect_avature_custom_domain(
+    final_url: str, html: str, evidence: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Detect Avature on a custom domain with strong positive evidence.
+
+    Requires signals from at least 2 different provenance classes (copied
+    from the hardened Greenhouse detector):
+    - URL: the resolved/navigated URL itself lives on an Avature-owned host.
+    - Vendor endpoint: a form/iframe action resolves to an Avature-owned host.
+    - Body: inert page-controlled content such as links, DOM attributes, or
+      requisition markers.  All body signals share ONE provenance class, so
+      two body signals are never enough.
+
+    DOM markers are vendor-specific (``data-avature-*``).  Generic attributes
+    such as ``data-requisition-id`` are deliberately NOT signals: every vendor
+    page carries them, so they cannot attribute identity.
+    """
+    parts = urlsplit(final_url)
+    host = (parts.hostname or "").casefold().rstrip(".")
+
+    soup = BeautifulSoup(str(html or "")[:200_000], "html.parser")
+
+    signals: dict[str, bool] = {
+        "avature_host_url": False,
+        "avature_link": False,
+        "avature_iframe": False,
+        "avature_form_action": False,
+        "avature_dom_marker": False,
+        "avature_requisition": False,
+    }
+
+    # Provenance class URL: only the resolved URL itself.
+    if _is_avature_host(host):
+        signals["avature_host_url"] = True
+
+    def is_avature_endpoint(value: str) -> bool:
+        try:
+            endpoint = urlsplit(urljoin(final_url, value))
+            return (
+                endpoint.scheme.casefold() == "https"
+                and endpoint.port in {None, 443}
+                and _is_avature_host(endpoint.hostname or "")
+            )
+        except ValueError:
+            return False
+
+    # Provenance class BODY: inert page-controlled links.  Resolve first and
+    # require an Avature-owned host; substring matching is unsafe.
+    for link in soup.select("a[href]"):
+        try:
+            if is_avature_endpoint(link.get("href", "")):
+                signals["avature_link"] = True
+                break
+        except ValueError:
+            continue
+
+    # Provenance class VENDOR_ENDPOINT: executable form/iframe destinations.
+    for iframe in soup.select("iframe[src]"):
+        if is_avature_endpoint(iframe.get("src", "")):
+            signals["avature_iframe"] = True
+            break
+
+    for form in soup.select("form[action]"):
+        if is_avature_endpoint(form.get("action", "")):
+            signals["avature_form_action"] = True
+            break
+
+    # Provenance class BODY: vendor-specific DOM markers are page-controlled
+    # and share provenance with every other body signal.
+    for el in soup.find_all():
+        for attr_name in el.attrs:
+            if attr_name.startswith("data-avature-"):
+                signals["avature_dom_marker"] = True
+                break
+        if signals["avature_dom_marker"]:
+            break
+    if not signals["avature_dom_marker"]:
+        for el in soup.select("[class*='avature'], [id*='avature']"):
+            if el.get("class") or el.get("id"):
+                signals["avature_dom_marker"] = True
+                break
+
+    # More BODY evidence: vendor-specific requisition identity with a value.
+    requisition_selectors = [
+        "[data-avature-requisition-id]",
+        "[data-avature-job-id]",
+        "[data-avature-posting-id]",
+        "meta[name*='avature-requisition']",
+        "meta[name*='avature-posting']",
+    ]
+    requisition_attrs = (
+        "data-avature-requisition-id",
+        "data-avature-job-id",
+        "data-avature-posting-id",
+    )
+    for selector in requisition_selectors:
+        for el in soup.select(selector):
+            val = el.get("value") or el.get("content")
+            if val is None:
+                for attr in requisition_attrs:
+                    val = el.get(attr)
+                    if val:
+                        break
+            if val and str(val).strip():
+                signals["avature_requisition"] = True
+                break
+        if signals["avature_requisition"]:
+            break
+
+    provenance = {
+        "url": signals["avature_host_url"],
+        "vendor_endpoint": signals["avature_iframe"]
+        or signals["avature_form_action"],
+        "body": signals["avature_link"]
+        or signals["avature_dom_marker"]
+        or signals["avature_requisition"],
+    }
+
+    if sum(provenance.values()) >= 2:
+        return {
+            "custom_domain_verified": True,
+            "avature_custom_domain_signals": signals,
+            "avature_custom_domain_provenance": provenance,
+        }
+    return None
+
+
+_BREEZY_CUSTOM_DOMAIN_HOSTS = frozenset(
+    {
+        "breezy.hr",
+        "www.breezy.hr",
+    }
+)
+
+
+def _is_breezy_host(hostname: str) -> bool:
+    """Strict vendor-host check: exact breezy.hr or a *.breezy.hr subdomain."""
+    host = (hostname or "").casefold().rstrip(".")
+    return host == "breezy.hr" or host.endswith(".breezy.hr")
+
+
+def _detect_breezy_custom_domain(
+    final_url: str, html: str, evidence: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Detect Breezy on a custom domain with strong positive evidence.
+
+    Requires signals from at least 2 different provenance classes (copied
+    from the hardened Greenhouse detector):
+    - URL: the resolved/navigated URL itself lives on a Breezy-owned host.
+    - Vendor endpoint: a form/iframe action resolves to a Breezy-owned host.
+    - Body: inert page-controlled content such as links, DOM attributes, or
+      requisition markers.  All body signals share ONE provenance class, so
+      two body signals are never enough.
+
+    DOM markers are vendor-specific (``data-breezy-*``).  Generic attributes
+    such as ``data-position-id`` are deliberately NOT signals: every vendor
+    page carries them, so they cannot attribute identity.
+    """
+    parts = urlsplit(final_url)
+    host = (parts.hostname or "").casefold().rstrip(".")
+
+    soup = BeautifulSoup(str(html or "")[:200_000], "html.parser")
+
+    signals: dict[str, bool] = {
+        "breezy_host_url": False,
+        "breezy_link": False,
+        "breezy_iframe": False,
+        "breezy_form_action": False,
+        "breezy_dom_marker": False,
+        "breezy_requisition": False,
+    }
+
+    # Provenance class URL: only the resolved URL itself.
+    if _is_breezy_host(host):
+        signals["breezy_host_url"] = True
+
+    def is_breezy_endpoint(value: str) -> bool:
+        try:
+            endpoint = urlsplit(urljoin(final_url, value))
+            return (
+                endpoint.scheme.casefold() == "https"
+                and endpoint.port in {None, 443}
+                and _is_breezy_host(endpoint.hostname or "")
+            )
+        except ValueError:
+            return False
+
+    # Provenance class BODY: inert page-controlled links.  Resolve first and
+    # require a Breezy-owned host; substring matching is unsafe.
+    for link in soup.select("a[href]"):
+        try:
+            if is_breezy_endpoint(link.get("href", "")):
+                signals["breezy_link"] = True
+                break
+        except ValueError:
+            continue
+
+    # Provenance class VENDOR_ENDPOINT: executable form/iframe destinations.
+    for iframe in soup.select("iframe[src]"):
+        if is_breezy_endpoint(iframe.get("src", "")):
+            signals["breezy_iframe"] = True
+            break
+
+    for form in soup.select("form[action]"):
+        if is_breezy_endpoint(form.get("action", "")):
+            signals["breezy_form_action"] = True
+            break
+
+    # Provenance class BODY: vendor-specific DOM markers are page-controlled
+    # and share provenance with every other body signal.
+    for el in soup.find_all():
+        for attr_name in el.attrs:
+            if attr_name.startswith("data-breezy-"):
+                signals["breezy_dom_marker"] = True
+                break
+        if signals["breezy_dom_marker"]:
+            break
+    if not signals["breezy_dom_marker"]:
+        for el in soup.select("[class*='breezy'], [id*='breezy']"):
+            if el.get("class") or el.get("id"):
+                signals["breezy_dom_marker"] = True
+                break
+
+    # More BODY evidence: vendor-specific requisition identity with a value.
+    requisition_selectors = [
+        "[data-breezy-position-id]",
+        "[data-breezy-requisition-id]",
+        "[data-breezy-job-id]",
+        "meta[name*='breezy-position']",
+        "meta[name*='breezy-requisition']",
+    ]
+    requisition_attrs = (
+        "data-breezy-position-id",
+        "data-breezy-requisition-id",
+        "data-breezy-job-id",
+    )
+    for selector in requisition_selectors:
+        for el in soup.select(selector):
+            val = el.get("value") or el.get("content")
+            if val is None:
+                for attr in requisition_attrs:
+                    val = el.get(attr)
+                    if val:
+                        break
+            if val and str(val).strip():
+                signals["breezy_requisition"] = True
+                break
+        if signals["breezy_requisition"]:
+            break
+
+    provenance = {
+        "url": signals["breezy_host_url"],
+        "vendor_endpoint": signals["breezy_iframe"]
+        or signals["breezy_form_action"],
+        "body": signals["breezy_link"]
+        or signals["breezy_dom_marker"]
+        or signals["breezy_requisition"],
+    }
+
+    if sum(provenance.values()) >= 2:
+        return {
+            "custom_domain_verified": True,
+            "breezy_custom_domain_signals": signals,
+            "breezy_custom_domain_provenance": provenance,
+        }
+    return None
+
+
+_ICIMS_CUSTOM_DOMAIN_HOSTS = frozenset(
+    {
+        "icims.com",
+        "www.icims.com",
+    }
+)
+
+
+def _is_icims_host(hostname: str) -> bool:
+    """Strict vendor-host check: exact icims.com or a *.icims.com subdomain."""
+    host = (hostname or "").casefold().rstrip(".")
+    return host == "icims.com" or host.endswith(".icims.com")
+
+
+def _detect_icims_custom_domain(
+    final_url: str, html: str, evidence: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Detect iCIMS on a custom domain with strong positive evidence.
+
+    Requires signals from at least 2 different provenance classes (copied
+    from the hardened Greenhouse detector):
+    - URL: the resolved/navigated URL itself lives on an iCIMS-owned host.
+    - Vendor endpoint: a form/iframe action resolves to an iCIMS-owned host.
+    - Body: inert page-controlled content such as links, DOM attributes, or
+      requisition markers.  All body signals share ONE provenance class, so
+      two body signals are never enough.
+
+    DOM markers are vendor-specific (``data-icims-*``).  Generic attributes
+    such as ``data-requisition-id`` are deliberately NOT signals: every vendor
+    page carries them, so they cannot attribute identity.
+    """
+    parts = urlsplit(final_url)
+    host = (parts.hostname or "").casefold().rstrip(".")
+
+    soup = BeautifulSoup(str(html or "")[:200_000], "html.parser")
+
+    signals: dict[str, bool] = {
+        "icims_host_url": False,
+        "icims_link": False,
+        "icims_iframe": False,
+        "icims_form_action": False,
+        "icims_dom_marker": False,
+        "icims_requisition": False,
+    }
+
+    # Provenance class URL: only the resolved URL itself.
+    if _is_icims_host(host):
+        signals["icims_host_url"] = True
+
+    def is_icims_endpoint(value: str) -> bool:
+        try:
+            endpoint = urlsplit(urljoin(final_url, value))
+            return (
+                endpoint.scheme.casefold() == "https"
+                and endpoint.port in {None, 443}
+                and _is_icims_host(endpoint.hostname or "")
+            )
+        except ValueError:
+            return False
+
+    # Provenance class BODY: inert page-controlled links.  Resolve first and
+    # require an iCIMS-owned host; substring matching is unsafe.
+    for link in soup.select("a[href]"):
+        try:
+            if is_icims_endpoint(link.get("href", "")):
+                signals["icims_link"] = True
+                break
+        except ValueError:
+            continue
+
+    # Provenance class VENDOR_ENDPOINT: executable form/iframe destinations.
+    for iframe in soup.select("iframe[src]"):
+        if is_icims_endpoint(iframe.get("src", "")):
+            signals["icims_iframe"] = True
+            break
+
+    for form in soup.select("form[action]"):
+        if is_icims_endpoint(form.get("action", "")):
+            signals["icims_form_action"] = True
+            break
+
+    # Provenance class BODY: vendor-specific DOM markers are page-controlled
+    # and share provenance with every other body signal.
+    for el in soup.find_all():
+        for attr_name in el.attrs:
+            if attr_name.startswith("data-icims-"):
+                signals["icims_dom_marker"] = True
+                break
+        if signals["icims_dom_marker"]:
+            break
+    if not signals["icims_dom_marker"]:
+        for el in soup.select("[class*='icims'], [id*='icims']"):
+            if el.get("class") or el.get("id"):
+                signals["icims_dom_marker"] = True
+                break
+
+    # More BODY evidence: vendor-specific requisition identity with a value.
+    requisition_selectors = [
+        "[data-icims-requisition-id]",
+        "[data-icims-job-id]",
+        "[data-icims-posting-id]",
+        "meta[name*='icims-requisition']",
+        "meta[name*='icims-posting']",
+    ]
+    requisition_attrs = (
+        "data-icims-requisition-id",
+        "data-icims-job-id",
+        "data-icims-posting-id",
+    )
+    for selector in requisition_selectors:
+        for el in soup.select(selector):
+            val = el.get("value") or el.get("content")
+            if val is None:
+                for attr in requisition_attrs:
+                    val = el.get(attr)
+                    if val:
+                        break
+            if val and str(val).strip():
+                signals["icims_requisition"] = True
+                break
+        if signals["icims_requisition"]:
+            break
+
+    provenance = {
+        "url": signals["icims_host_url"],
+        "vendor_endpoint": signals["icims_iframe"]
+        or signals["icims_form_action"],
+        "body": signals["icims_link"]
+        or signals["icims_dom_marker"]
+        or signals["icims_requisition"],
+    }
+
+    if sum(provenance.values()) >= 2:
+        return {
+            "custom_domain_verified": True,
+            "icims_custom_domain_signals": signals,
+            "icims_custom_domain_provenance": provenance,
+        }
+    return None
+
+
 def classify_target(
     source_url: str,
     final_url: str | None = None,
@@ -1203,6 +2601,51 @@ def classify_target(
     if hint and hint not in _KNOWN_PROVIDERS:
         return _unresolved(source, final, "untrusted_provider_hint", "", base_evidence)
     provider = trusted_provider or html_provider or evidence_provider
+
+    # Evaluate every custom-domain detector before selecting a provider.  A
+    # page that satisfies two vendors is ambiguous and must never inherit the
+    # detector ordering as an identity decision.
+    if not trusted_provider:
+        custom_detectors = (
+            ("greenhouse", _detect_greenhouse_custom_domain),
+            ("talentlink", _detect_talentlink_custom_domain),
+            ("oracle", _detect_oracle_hcm_custom_domain),
+            ("cornerstone", _detect_cornerstone_custom_domain),
+            ("talentview", _detect_talentview_custom_domain),
+            ("recruitee", _detect_recruitee_custom_domain),
+            ("avature", _detect_avature_custom_domain),
+            ("breezy", _detect_breezy_custom_domain),
+            ("icims", _detect_icims_custom_domain),
+        )
+        detections: list[tuple[str, dict[str, Any]]] = []
+        for detected_provider, detector in custom_detectors:
+            detection = detector(final, html, base_evidence)
+            if detection:
+                detections.append((detected_provider, detection))
+        if len(detections) > 1:
+            return _unresolved(
+                source,
+                final,
+                "conflicting_custom_domain_providers",
+                "",
+                base_evidence,
+            )
+        if detections:
+            detected_provider, detection = detections[0]
+            if provider and provider != detected_provider:
+                return TargetResolution(
+                    source,
+                    final,
+                    TargetKind.MISMATCH,
+                    provider,
+                    False,
+                    False,
+                    ("provider_detection_mismatch",),
+                    base_evidence,
+                )
+            provider = detected_provider
+            base_evidence.update(detection)
+
     if hint and provider and hint != provider:
         return TargetResolution(
             source,
@@ -1216,15 +2659,6 @@ def classify_target(
         )
     if hint and not provider:
         return _unresolved(source, final, "untrusted_provider_hint", "", base_evidence)
-
-    if origin_provider and not trusted_provider:
-        return _unresolved(
-            source,
-            final,
-            "provider_origin_untrusted",
-            origin_provider,
-            base_evidence,
-        )
     if path.endswith((".pdf", ".doc", ".docx", ".zip")):
         return TargetResolution(
             source, final, TargetKind.NON_HTML, provider, False, False,
@@ -1404,18 +2838,19 @@ def classify_target(
     )
     if custom_identity:
         base_evidence["custom_domain_verified"] = True
+    synthetic_identity = _is_loopback_url(final) and base_evidence.get("synthetic_lab") is True
     identity_ok = bool(identity_verified) and (
         (bool(trusted_provider) and _trusted_identity_evidence(base_evidence, provider))
         or custom_identity
-        or (_is_loopback_url(final) and base_evidence.get("synthetic_lab") is True)
+        or synthetic_identity
     )
 
     # Any custom-domain ATS claim remains review-only until the independent
     # identity bundle above is present.  This catches forms/redirects that
     # merely copy an ATS label onto a marketing or attacker page.
-    if provider and not trusted_provider and not custom_identity:
+    if provider and not trusted_provider and not custom_identity and not synthetic_identity:
         return _unresolved(source, final, "custom_domain_identity_unverified", provider, base_evidence)
-    if source_provider and not trusted_provider and not custom_identity:
+    if source_provider and not trusted_provider and not custom_identity and not synthetic_identity:
         return _unresolved(source, final, "source_provider_redirect_untrusted", provider, base_evidence)
 
     if form_handle is not None:
@@ -1491,6 +2926,10 @@ def classify_target(
 
     if custom_identity and re.search(r"/(?:apply|application)(?:/|$)", path):
         kind, reason = TargetKind.APPLICATION_ENTRY, "verified_custom_ats_job"
+    elif custom_identity and provider == "greenhouse":
+        # Positively identified Greenhouse on custom domain: treat as application entry
+        # even without /apply in path (custom domains use varied path structures)
+        kind, reason = TargetKind.APPLICATION_ENTRY, "verified_custom_greenhouse_job"
     elif provider == "greenhouse" and re.search(r"/jobs/\d+(?:/|$)", path):
         kind, reason = TargetKind.APPLICATION_ENTRY, "direct_ats_job"
     elif provider == "lever" and len([part for part in path.split("/") if part]) >= 2:
@@ -1502,7 +2941,7 @@ def classify_target(
     else:
         kind, reason = TargetKind.JOB_DETAIL, "unverified_job_detail"
 
-    if provider and not trusted_provider and not custom_identity:
+    if provider and not trusted_provider and not custom_identity and not synthetic_identity:
         return _unresolved(source, final, "custom_domain_identity_unverified", provider, base_evidence)
 
     return TargetResolution(

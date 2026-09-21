@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -536,19 +537,40 @@ def test_row_allowlist_is_run_scoped_and_does_not_change_settings() -> None:
             "role": "Example Role",
             "requisition": "/application/42",
             "form_identity": "42",
+            "custom_domain_verified": True,
         },
     )
 
+    # A run-scoped host list must not promote a custom-domain marker to
+    # target authority. Preserve the old incomplete fixture as a negative.
+    with pytest.raises(ValueError, match="incomplete or not currently verified"):
+        navigator.start(
+            "unverified-allowlist-application", RunMode.PREFILL, headed=True,
+            resolution=resolution, run_allowlist=frozenset({"row.example.test"}),
+        )
+    assert captured == []
+    assert settings.live_domain_allowlist == before
+
+    # Exercise host scoping with a complete trusted-provider entry instead.
+    url = "https://boards.greenhouse.io/example/jobs/42"
+    verified = TargetResolution(
+        source_url=url, final_url=url, kind=TargetKind.APPLICATION_ENTRY,
+        provider="greenhouse", identity_verified=True,
+        evidence={
+            "provider": "greenhouse", "application_origin": origin_for_url(url),
+            "employer": "Example Employer", "role": "Example Role",
+            "requisition": "42", "form_identity": "42",
+        },
+    )
     snapshot = navigator.start(
-        "allowlist-application",
-        RunMode.PREFILL,
-        headed=True,
-        resolution=resolution,
-        run_allowlist=frozenset({"row.example.test"}),
+        "allowlist-application", RunMode.PREFILL, headed=True,
+        resolution=verified,
+        run_allowlist=frozenset({"boards.greenhouse.io"}),
     )
     navigator.shutdown()
 
     assert snapshot.mode == RunMode.PREFILL.value
-    assert captured[0]["allowlist"] == frozenset({"row.example.test"})
+    assert len(captured) == 1
+    assert captured[0]["allowlist"] == frozenset({"boards.greenhouse.io"})
     assert captured[0]["allowlist_is_run_scoped"] is True
     assert settings.live_domain_allowlist == before

@@ -315,6 +315,11 @@ def test_custom_domain_needs_positive_ats_and_identity_evidence() -> None:
         provider_hint="greenhouse",
         identity_verified=True,
     )
+    # Page-authored DOM + caller-supplied evidence bundle is NOT independent
+    # provider proof. The custom_domain_verified marker must come from the
+    # detector pipeline after multi-provenance corroboration, not from the
+    # page itself. This fixture previously expected a positive result; the
+    # correct result is UNRESOLVED.
     verified = classify_target(
         "https://careers.acme.test/jobs/summer-analyst",
         "https://careers.acme.test/jobs/summer-analyst/apply",
@@ -333,33 +338,34 @@ def test_custom_domain_needs_positive_ats_and_identity_evidence() -> None:
 
     assert unresolved.kind is TargetKind.UNRESOLVED
     assert unresolved.verified_for_automation is False
-    assert verified.kind is TargetKind.APPLICATION_ENTRY
-    assert verified.provider == "greenhouse"
-    assert verified.verified_for_automation is True
+    assert verified.kind is TargetKind.UNRESOLVED
+    assert verified.verified_for_automation is False
+    assert "custom_domain_identity_unverified" in verified.reason_codes
 
-
-def test_custom_domain_identity_bundle_can_prove_ats_without_source_hint() -> None:
-    from app.automation.targets import classify_target
-
-    result = classify_target(
-        "https://careers.acme.test/jobs/summer-analyst",
-        "https://careers.acme.test/jobs/summer-analyst/apply",
+    # POSITIVE CONTROL: the trusted-host path is separate and unaffected --
+    # a real Greenhouse host with structured-feed proof still resolves and
+    # still selects the greenhouse adapter.
+    trusted = classify_target(
+        "https://boards.greenhouse.io/acme/jobs/1234",
+        "https://boards.greenhouse.io/acme/jobs/1234",
+        provider_hint="greenhouse",
         identity_verified=True,
-        evidence={
-            "ats": "greenhouse",
-            "employer": "Acme",
-            "role": "Summer Analyst",
-            "requisition_id": "REQ-8",
-            "form_id": "application-form",
-        },
+        evidence={"structured_feed": "greenhouse:acme"},
     )
+    assert trusted.kind is TargetKind.APPLICATION_ENTRY
+    assert trusted.provider == "greenhouse"
+    assert trusted.verified_for_automation is True
 
-    assert result.provider == "greenhouse"
-    assert result.kind is TargetKind.APPLICATION_ENTRY
-    assert result.verified_for_automation is True
 
-
-def test_registry_allows_custom_domain_only_after_positive_identity_bundle() -> None:
+# SECURITY: on a custom (non-trusted) domain every identity value in a
+# page-supplied bundle (ats/provider, employer, role, requisition, form id)
+# is read from the employer's own page DOM/JSON-LD and is therefore
+# attacker-controllable (see app/services/navigator.py:1716-1930
+# `_page_observation`). `ats == provider` inside the same bundle is the page
+# agreeing with itself, not independent corroboration, so a bare bundle must
+# never prove the ATS. Do NOT "fix" a red test here by restoring
+# self-corroboration; the hardening that removed it is correct.
+def test_custom_domain_identity_bundle_alone_does_not_prove_ats() -> None:
     from app.automation.adapters.registry import AdapterRegistry
     from app.automation.targets import classify_target
 
@@ -376,10 +382,70 @@ def test_registry_allows_custom_domain_only_after_positive_identity_bundle() -> 
         },
     )
 
-    assert AdapterRegistry().detect(result).name == "greenhouse"
+    # The page-controlled bundle alone proves nothing: no automation claim
+    # and no vendor adapter. (The `provider` label may echo the page claim,
+    # but it carries no authority: verified_for_automation is False and the
+    # registry falls back to generic.)
+    assert result.kind in (TargetKind.UNRESOLVED, TargetKind.MISMATCH)
+    assert result.verified_for_automation is False
+    assert AdapterRegistry().detect(result).name == "generic"
+
+    # POSITIVE CONTROL: the trusted-host path is separate and unaffected --
+    # a real Greenhouse host with structured-feed proof still resolves and
+    # still selects the greenhouse adapter.
+    trusted = classify_target(
+        "https://boards.greenhouse.io/acme/jobs/1234",
+        "https://boards.greenhouse.io/acme/jobs/1234",
+        provider_hint="greenhouse",
+        identity_verified=True,
+        evidence={"structured_feed": "greenhouse:acme"},
+    )
+    assert trusted.kind is TargetKind.APPLICATION_ENTRY
+    assert trusted.provider == "greenhouse"
+    assert trusted.verified_for_automation is True
+    assert AdapterRegistry().detect(trusted).name == "greenhouse"
 
 
-def test_registry_accepts_explicit_custom_resolution_identity_evidence() -> None:
+# SECURITY: same reason as above -- a page-supplied identity bundle on a
+# custom domain cannot corroborate itself (app/services/navigator.py:1716-1930).
+# The registry must fall back to generic unless independent proof exists.
+def test_registry_denies_custom_domain_identity_bundle_without_independent_proof() -> None:
+    from app.automation.adapters.registry import AdapterRegistry
+    from app.automation.targets import classify_target
+
+    result = classify_target(
+        "https://careers.acme.test/jobs/summer-analyst",
+        "https://careers.acme.test/jobs/summer-analyst/apply",
+        identity_verified=True,
+        evidence={
+            "ats": "greenhouse",
+            "employer": "Acme",
+            "role": "Summer Analyst",
+            "requisition_id": "REQ-8",
+            "form_id": "application-form",
+        },
+    )
+
+    assert result.verified_for_automation is False
+    assert AdapterRegistry().detect(result).name == "generic"
+
+    # POSITIVE CONTROL: trusted Greenhouse host still enables its adapter.
+    trusted = classify_target(
+        "https://boards.greenhouse.io/acme/jobs/1234",
+        "https://boards.greenhouse.io/acme/jobs/1234",
+        provider_hint="greenhouse",
+        identity_verified=True,
+        evidence={"structured_feed": "greenhouse:acme"},
+    )
+    assert AdapterRegistry().detect(trusted).name == "greenhouse"
+
+
+# SECURITY: a hand-constructed TargetResolution carrying only a
+# page-controllable identity bundle is not independent proof of the ATS
+# (app/services/navigator.py:1716-1930). The registry must not enable a
+# vendor adapter for it. This shape is not produced by any production
+# custom-domain caller.
+def test_registry_denies_handbuilt_custom_resolution_identity_bundle() -> None:
     from app.automation.adapters.registry import AdapterRegistry
 
     result = TargetResolution(
@@ -397,7 +463,21 @@ def test_registry_accepts_explicit_custom_resolution_identity_evidence() -> None
         },
     )
 
-    assert AdapterRegistry().detect(result).name == "greenhouse"
+    assert result.verified_for_automation is False
+    assert AdapterRegistry().detect(result).name == "generic"
+
+    # POSITIVE CONTROL: a trusted-host resolution with structured-feed proof
+    # still enables the greenhouse adapter.
+    trusted = TargetResolution(
+        source_url="https://boards.greenhouse.io/acme/jobs/1234",
+        final_url="https://boards.greenhouse.io/acme/jobs/1234",
+        kind=TargetKind.APPLICATION_ENTRY,
+        provider="greenhouse",
+        identity_verified=True,
+        evidence={"structured_feed": "greenhouse:acme"},
+    )
+    assert trusted.verified_for_automation is True
+    assert AdapterRegistry().detect(trusted).name == "greenhouse"
 
 
 def test_registry_returns_generic_for_unverified_hosted_ats_resolution() -> None:

@@ -52,6 +52,21 @@ _EMAIL_PATTERN = re.compile(
     r"(?:[A-Z0-9-]+\.)+[A-Z]{2,63}\b",
     re.IGNORECASE,
 )
+# RFC 2606 reserves .invalid so that it can never be delegated or resolve, and
+# this codebase uses it for synthetic message-ids such as
+# <argus-test-...@argus.invalid>, which are not candidate PII. Narrowing those
+# false positives cannot admit anything real, because no routable domain ends
+# in .invalid.
+#
+# Only .invalid. The other reserved TLDs are deliberately excluded: the scanner
+# suite plants ada.lovelace@private.example and private.person@private.example
+# as realistic personal literals it expects to be CAUGHT, and policy allowlists
+# the exact domain example.test rather than all of .test. Widening this set to
+# the rest of RFC 2606 silently blinds those plants.
+#
+# Kept in code, not in the JSON policy, because that file may only tighten the
+# built-in baseline, never widen it.
+_RESERVED_EMAIL_TLDS = frozenset({"invalid"})
 _PHONE_PATTERN = re.compile(
     r"(?<!\w)\+?\d(?:[\d().\s-]{7,}\d)(?!\w)"
 )
@@ -294,7 +309,24 @@ def _line_is_pattern_definition(text: str, offset: int) -> bool:
 
 
 def _is_date_like(value: str) -> bool:
-    return bool(re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", value.strip()))
+    """Exclude an ISO-8601 date, and the leading slice of a date-time.
+
+    The phone pattern cannot cross a colon, so a timestamp such as
+    ``2026-09-10 14:51:57 UTC`` arrives here as ``2026-09-10 14``. That is not
+    a bare date, so the previous fullmatch let it through: ten digits satisfied
+    the phone length test and the space satisfied the punctuation test, and
+    every fixture timestamp in the tracker tests was reported as a candidate
+    phone number. A real phone number cannot take the shape YYYY-MM-DD, so
+    widening this guard removes false positives without costing detection.
+    """
+
+    return bool(
+        re.fullmatch(
+            r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
+            r"(?:[T ]\d{1,2}(?::\d{2}(?::\d{2})?)?)?",
+            value.strip(),
+        )
+    )
 
 
 def _looks_like_phone(value: str, *, contextual: bool = False) -> bool:
@@ -334,6 +366,8 @@ def _scan_text(text: str, *, label: str, config: PrivacyConfig) -> list[PrivacyF
 
     for match in _EMAIL_PATTERN.finditer(text):
         domain = match.group(0).rsplit("@", 1)[-1].casefold()
+        if domain.rsplit(".", 1)[-1] in _RESERVED_EMAIL_TLDS:
+            continue
         if domain not in config.synthetic_email_domains and not any(
             domain.endswith("." + allowed) for allowed in config.synthetic_email_domains
         ):

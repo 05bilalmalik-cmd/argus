@@ -20,7 +20,7 @@ from app.config import Settings
 def settings() -> Settings:
     s = Settings.load(
         {
-            "ARGUS_DATA_DIR": r"C:/Users/demo/AppData/Local/Temp/argus_test_fixtures",
+            "ARGUS_DATA_DIR": r"C:/Users/example/AppData/Local/Temp/argus_test_fixtures",
             "ARGUS_ENABLE_LIVE_SUBMIT": "true",
             "ARGUS_LIVE_DOMAIN_ALLOWLIST": (
                 "boards.greenhouse.io,job-boards.greenhouse.io,jobs.lever.co,"

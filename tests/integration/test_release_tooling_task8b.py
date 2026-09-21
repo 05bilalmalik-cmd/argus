@@ -54,6 +54,8 @@ def _fixture_repository(root: Path) -> None:
         "tests/e2e/test_apply_ui.py",
         "tests/e2e/test_dashboard.py",
         "tests/e2e/test_lab_adapter_variants.py",
+        "tests/e2e/test_local_portal_end_to_end.py",
+        "tests/e2e/test_static_legal_boundaries_campaign.py",
         "tests/e2e/test_submission_unknown.py",
     ):
         _write(root, relative)
@@ -87,7 +89,7 @@ def _evidence(root: Path, log: Path | None = None) -> dict[str, object]:
         "unit", "integration", "tests/e2e/test_adversarial_flows.py",
         "tests/e2e/test_application_flows.py", "tests/e2e/test_application_navigator_journeys.py",
         "tests/e2e/test_apply_ui.py", "tests/e2e/test_dashboard.py",
-        "tests/e2e/test_lab_adapter_variants.py", "tests/e2e/test_submission_unknown.py",
+        "tests/e2e/test_lab_adapter_variants.py", "tests/e2e/test_local_portal_end_to_end.py", "tests/e2e/test_static_legal_boundaries_campaign.py", "tests/e2e/test_submission_unknown.py",
         "compile", "cli_help", "cli_safe_smoke", "audit_fresh_temp", "migration_fresh_temp", "privacy_source",
     ]
     logs = []
@@ -278,6 +280,41 @@ def test_release_excludes_candidate_documents_and_private_browser_state(tmp_path
     assert not any("browser-profiles" in name or "cookies" in name for name in members)
 
 
+_APPROVED_CAMPAIGN_E2E = (
+    "test_adversarial_flows.py",
+    "test_application_flows.py",
+    "test_application_navigator_journeys.py",
+    "test_apply_ui.py",
+    "test_dashboard.py",
+    "test_lab_adapter_variants.py",
+    "test_local_portal_end_to_end.py",
+    "test_static_legal_boundaries_campaign.py",
+    "test_submission_unknown.py",
+)
+
+
+def test_e2e_discovery_accepts_exact_approved_campaign_set(tmp_path: Path) -> None:
+    for name in _APPROVED_CAMPAIGN_E2E:
+        _write(tmp_path, f"tests/e2e/{name}")
+    assert {path.name for path in _e2e_files(tmp_path)} == set(_APPROVED_CAMPAIGN_E2E)
+
+
+@pytest.mark.parametrize("missing", _APPROVED_CAMPAIGN_E2E)
+def test_e2e_discovery_still_requires_each_core_file(tmp_path: Path, missing: str) -> None:
+    for name in _APPROVED_CAMPAIGN_E2E:
+        if name != missing:
+            _write(tmp_path, f"tests/e2e/{name}")
+    with pytest.raises(ValueError, match=f"missing={missing}"):
+        _e2e_files(tmp_path)
+
+
+def test_e2e_discovery_still_rejects_an_unapproved_file(tmp_path: Path) -> None:
+    for name in (*_APPROVED_CAMPAIGN_E2E, "test_unapproved_campaign.py"):
+        _write(tmp_path, f"tests/e2e/{name}")
+    with pytest.raises(ValueError, match="unexpected=test_unapproved_campaign.py"):
+        _e2e_files(tmp_path)
+
+
 def test_verify_dry_run_emits_safe_machine_manifest(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[2]
     manifest = tmp_path / "verification.json"
@@ -303,6 +340,8 @@ def test_verify_dry_run_emits_safe_machine_manifest(tmp_path: Path) -> None:
     assert {
         "tests/e2e/test_application_navigator_journeys.py",
         "tests/e2e/test_apply_ui.py",
+        "tests/e2e/test_local_portal_end_to_end.py",
+        "tests/e2e/test_static_legal_boundaries_campaign.py",
         "tests/e2e/test_submission_unknown.py",
     } <= {step["name"] for step in payload["steps"] if step["kind"] == "e2e"}
     assert payload["environment"]["ARGUS_ENABLE_LIVE_SUBMIT"] == "false"

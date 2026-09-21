@@ -263,8 +263,8 @@ def test_workday_prefill_hands_off_on_first_step_without_next_or_post(live_serve
     ("scenario", "adapter"),
     [
         ("workday-journey", "workday"),
-        ("smartrecruiters-journey", "smartrecruiters"),
-        ("workable-journey", "workable"),
+        ("smartrecruiters-journey-legal-free", "smartrecruiters"),
+        ("workable-journey-legal-free", "workable"),
     ],
 )
 def test_low_level_submit_mode_journey_stops_before_activation(
@@ -311,7 +311,7 @@ def test_low_level_submit_mode_journey_stops_before_activation(
         profile_values={
             "identity.first_name": "Demo", "identity.last_name": "Candidate",
             "contact.email": "demo@example.test",
-            "education.university": "Example University",
+            "education.university": "Lancaster University",
             "education.graduation_year": 2028, "legal.sponsorship": False,
         },
         answers={}, documents={"document.cv": str(cv)},
@@ -358,7 +358,10 @@ def test_low_level_submit_mode_journey_stops_before_activation(
             assert fields["last_name"] == "Candidate"
             assert fields["email"] == "demo@example.test"
             assert fields["graduation_year"] == "2028"
-            assert fields["sponsor"] == "no"
+            # Legal declarations fail closed: the stored sponsorship answer is
+            # never auto-filled, so the radio stays unchecked (the DOM
+            # observer only records checked radios).
+            assert "sponsor" not in fields
             assert len(fields["cv"]) == 1
             assert fields["cv"][0]["size"] > 0
             assert fields["lab_distraction_clicks"] == "0"
@@ -380,7 +383,7 @@ def test_route_rejects_candidate_egress_on_different_canonical_origin():
     class Request:
         url = "http://127.0.0.1:9999/api/collect"
         method = "POST"
-        post_data = "email=alex%40example.test"
+        post_data = "email=demo%40example.test"
         headers = {"content-type": "application/x-www-form-urlencoded"}
 
     class Route:
@@ -458,7 +461,7 @@ def test_read_only_route_blocks_same_origin_candidate_request():
     class Request:
         url = "http://127.0.0.1:8787/api/profile"
         method = "POST"
-        post_data = "email=alex%40example.test"
+        post_data = "email=demo%40example.test"
         headers = {"content-type": "application/x-www-form-urlencoded"}
 
     class Route:
@@ -583,7 +586,7 @@ def test_loopback_submit_uses_strict_receipt_contract_not_legacy_helper(
     from app.main import create_app
 
     _configure_candidate(live_server.base_url)
-    application_id = _prepare(live_server, "greenhouse", "greenhouse")
+    application_id = _prepare(live_server, "greenhouse-legal-free", "greenhouse")
     settings = Settings.load(
         {
             "ARGUS_DATA_DIR": str(live_server.data_dir),
@@ -677,7 +680,7 @@ def test_direct_runner_submit_without_exact_authority_refuses_and_cleans_owner(l
     from app.models import Application, AutomationRun, SubmissionIntent
 
     _configure_candidate(live_server.base_url)
-    application_id = _prepare(live_server, "greenhouse", "greenhouse")
+    application_id = _prepare(live_server, "greenhouse-legal-free", "greenhouse")
     settings = Settings.load(
         {
             "ARGUS_DATA_DIR": str(live_server.data_dir),
@@ -729,7 +732,7 @@ def test_pre_authority_confirmed_result_cannot_promote_application(
     from app.models import Application, SubmissionAuthority, SubmissionIntent
 
     _configure_candidate(live_server.base_url)
-    application_id = _prepare(live_server, "greenhouse", "greenhouse")
+    application_id = _prepare(live_server, "greenhouse-legal-free", "greenhouse")
     settings = Settings.load(
         {
             "ARGUS_DATA_DIR": str(live_server.data_dir),
@@ -812,7 +815,7 @@ def test_captcha_preflight_hands_off_without_consuming_authority_or_post(
     from app.models import SubmissionAuthority, SubmissionIntent
 
     _configure_candidate(live_server.base_url)
-    application_id = _prepare(live_server, "greenhouse", "greenhouse")
+    application_id = _prepare(live_server, "greenhouse-legal-free", "greenhouse")
     settings = Settings.load(
         {
             "ARGUS_DATA_DIR": str(live_server.data_dir),
@@ -930,7 +933,7 @@ def test_approved_answer_mutation_after_review_refuses_before_consume_or_post(
     from app.services.answers import AnswerService
 
     _configure_candidate(live_server.base_url)
-    application_id = _prepare(live_server, "greenhouse", "greenhouse")
+    application_id = _prepare(live_server, "greenhouse-legal-free", "greenhouse")
     settings = Settings.load(
         {
             "ARGUS_DATA_DIR": str(live_server.data_dir),
@@ -1013,7 +1016,7 @@ def test_http_confirm_rejects_same_origin_target_mutation_after_display(
     from app.models import SubmissionAuthority
 
     _configure_candidate(live_server.base_url)
-    application_id = _prepare(live_server, "greenhouse", "greenhouse")
+    application_id = _prepare(live_server, "greenhouse-legal-free", "greenhouse")
     settings = Settings.load(
         {
             "ARGUS_DATA_DIR": str(live_server.data_dir),
@@ -1078,7 +1081,7 @@ def test_concurrent_http_confirm_returns_one_durable_authority_id(
     from app.models import SubmissionAuthority
 
     _configure_candidate(live_server.base_url)
-    application_id = _prepare(live_server, "greenhouse", "greenhouse")
+    application_id = _prepare(live_server, "greenhouse-legal-free", "greenhouse")
     settings = Settings.load(
         {
             "ARGUS_DATA_DIR": str(live_server.data_dir),
@@ -1154,7 +1157,7 @@ def test_document_mutation_after_review_refuses_before_consume_or_post(
     from app.services.documents import DocumentService
 
     _configure_candidate(live_server.base_url)
-    application_id = _prepare(live_server, "greenhouse", "greenhouse")
+    application_id = _prepare(live_server, "greenhouse-legal-free", "greenhouse")
     settings = Settings.load(
         {
             "ARGUS_DATA_DIR": str(live_server.data_dir),

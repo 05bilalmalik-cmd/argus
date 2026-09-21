@@ -32,7 +32,7 @@ def test_profile_answers_documents_and_opportunity_pipeline_api(tmp_path: Path) 
                 "first_name": "Demo",
                 "last_name": "Candidate",
                 "email": "demo@example.test",
-                "university": "Example University",
+                "university": "Lancaster University",
                 "degree": "BSc Finance",
                 "graduation_year": 2029,
                 "work_authorisation": "Approved test wording",

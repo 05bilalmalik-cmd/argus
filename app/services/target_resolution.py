@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import inspect
 import json
+import logging
 import re
+import unicodedata
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -87,6 +90,9 @@ _IDENTITY_EVIDENCE_KEYS = frozenset(
 _MAX_EVIDENCE_DEPTH = 8
 _MAX_EVIDENCE_ITEMS = 100
 _MAX_EVIDENCE_STRING = 1000
+_MAX_RESOLVER_ERROR_DETAIL = 300
+
+logger = logging.getLogger(__name__)
 
 
 class UserStatusAutomationExcludedError(RuntimeError):
@@ -136,6 +142,26 @@ def _sanitise_url(value: str, *, key: str = "") -> str:
         )
     )
     return safe_url[:_MAX_EVIDENCE_STRING]
+
+
+_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+
+
+def _sanitise_resolver_error_detail(message: object) -> str:
+    """Redact a caught resolver error for human-readable diagnostics only.
+
+    Embedded URLs are passed through :func:`_sanitise_url` so sensitive
+    query values (for example a greenhouse ``token``) are redacted in the
+    diagnostic string.  This helper must never be applied to the stored
+    binding-contract URL itself (see :func:`_contract_url`); it is only for
+    the short ``resolver_error_detail`` evidence field.
+    """
+
+    text = _sanitise_text(str(message or ""))
+    redacted = _URL_IN_TEXT.sub(
+        lambda match: _sanitise_url(match.group(0)), text
+    )
+    return _sanitise_text(redacted)[:_MAX_RESOLVER_ERROR_DETAIL]
 
 
 def _contract_url(value: object) -> str:
@@ -339,6 +365,27 @@ class ResolutionOutcome:
     handoff: Mapping[str, object]
 
 
+def _accepts_source_grant(method: Any) -> bool:
+    """Report whether a resolver hook accepts the one-call source grant.
+
+    Legacy single-argument hooks (``resolve_source(application_id)``) keep
+    the previous capability-less call shape; only hooks that declare the
+    grant keyword (or ``**kwargs``) receive it.  Opaque callables keep the
+    established keyword call.
+    """
+
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return True
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return True
+    return "source_capability" in parameters
+
+
 class NavigatorTargetResolver:
     """Production adapter for the headed Navigator source-resolution hook.
 
@@ -375,24 +422,37 @@ class NavigatorTargetResolver:
             if callable(method):
                 capability = self.source_capability
                 owned_capability = False
-                if capability is None and bool(
-                    getattr(
-                        getattr(self.navigator, "settings", None),
-                        "apply_click_enabled",
-                        False,
-                    )
-                ):
-                    # The feature flag creates one exact, row-bound grant for
-                    # this call only.  It is revoked after Navigator has
-                    # completed owner-thread teardown, regardless of result.
+                if capability is None:
+                    # The batch adapter always carries a one-call grant for
+                    # the stored inspection URL; the headed endpoint adapter
+                    # must do the same.  Without it the Navigator's local
+                    # egress gate refuses every public inspection URL before
+                    # any browser exists, and the refusal surfaces only as a
+                    # generic ``resolver_contract_invalid``.  The grant is
+                    # bound to the exact stored URL, re-checked against a
+                    # fresh database read inside the Navigator, and revoked
+                    # after this call, so no other destination is authorised.
                     from app.services.navigator import SourceResolutionCapability
 
-                    capability = SourceResolutionCapability.issue(
-                        context.inspection_url or context.source_url
-                    )
-                    owned_capability = True
+                    try:
+                        capability = SourceResolutionCapability.issue(
+                            context.inspection_url or context.source_url
+                        )
+                    except ValueError:
+                        # Lab/loopback fixtures cannot carry a public-URL
+                        # grant.  Keep the previous capability-less call so
+                        # those rows behave exactly as before.
+                        capability = None
+                        logger.debug(
+                            "target resolver proceeding without source grant for %s",
+                            context.opportunity_id,
+                        )
+                    else:
+                        owned_capability = True
                 try:
-                    if capability is not None:
+                    if capability is not None and (
+                        not owned_capability or _accepts_source_grant(method)
+                    ):
                         return method(
                             context.application_id,
                             source_capability=capability,
@@ -484,6 +544,29 @@ def _identity_text(value: object) -> str:
     return " ".join(str(value or "").casefold().split())
 
 
+def _canonical_binding_text(value: object) -> str:
+    """Canonicalize employer/role exactly like the persisted-target loader.
+
+    Mirrors ``navigator._canonical_identity_text`` without importing it
+    (that module owns the authoritative employer-alias table, which stays
+    empty and unchanged). The downstream loader remains the final defense;
+    this pre-promotion check only stops persisting a misleading success.
+    """
+
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return " ".join(
+        "".join(character if character.isalnum() else " " for character in text).split()
+    )
+
+
+def _is_loopback_final(url: str) -> bool:
+    try:
+        host = (urlsplit(url).hostname or "").casefold().rstrip(".")
+    except ValueError:
+        return False
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
 def _placeholder_employer(value: object) -> bool:
     return _identity_text(value) in {"", "unknown"}
 
@@ -561,6 +644,60 @@ def _candidate_binding_reason(
         )
         if final_identity.canonical_key != expected_key:
             return "resolution_requisition_mismatch"
+    elif not (
+        _is_loopback_final(resolution.final_url)
+        and evidence.get("synthetic_lab") is True
+    ):
+        # A final URL no supported parser can tie to the stored
+        # provider/tenant/job carries no independent provider proof.
+        # Page-authored URL + endpoint signals are detection metadata, not
+        # authority. Keep the custom target unverified; trusted and loopback
+        # positives are unaffected (trusted parses, loopback is exempt).
+        return "resolution_requisition_mismatch"
+
+    # Observed employer/role must match the authoritative stored opportunity
+    # before promotion, using exact canonical equality (the alias table owned
+    # by navigator stays empty and unchanged).  A missing observed value is a
+    # bounded pre-promotion failure too: the downstream loader rejects an
+    # envelope that never observed employer/role proof, and record() and
+    # resolve() must agree with it.
+    expected_employer = _canonical_binding_text(context.employer)
+    if expected_employer:
+        employer_values = [
+            str(item).strip()
+            for item in _evidence_scalar_values(evidence, EMPLOYER_EVIDENCE_KEYS)
+            if str(item or "").strip()
+        ]
+        if not employer_values:
+            return "resolution_employer_missing"
+        if any(
+            _canonical_binding_text(item) != expected_employer
+            for item in employer_values
+        ):
+            return "resolution_employer_mismatch"
+    expected_role = _canonical_binding_text(context.role_title)
+    if expected_role:
+        role_values = [
+            str(item).strip()
+            for item in _evidence_scalar_values(evidence, ROLE_EVIDENCE_KEYS)
+            if str(item or "").strip()
+        ]
+        if not role_values:
+            return "resolution_role_missing"
+        if any(
+            _canonical_binding_text(item) != expected_role for item in role_values
+        ):
+            return "resolution_role_mismatch"
+
+    # A verified target needs an observed form identity (the loader requires
+    # it too).  Do not synthesize it from the stored opportunity or the URL.
+    form_identity_values = [
+        str(item).strip()
+        for item in _evidence_scalar_values(evidence, FORM_IDENTITY_EVIDENCE_KEYS)
+        if str(item or "").strip()
+    ]
+    if not form_identity_values:
+        return "resolution_form_identity_missing"
 
     # A form target needs a real bound root/control/action observation.  A
     # synthetic flag may make the pure classifier useful in tests, but it is
@@ -595,16 +732,26 @@ def _candidate_binding_reason(
 
     # Form actions must remain on the verified application origin.  The
     # destination itself is still the immutable final_url; this is only a
-    # contradiction check and never a navigation target.
+    # contradiction check and never a navigation target. Resolve every
+    # action against final_url with the exact canonical origin helper:
+    # relative same-origin and valid empty actions pass; cross-origin
+    # absolute/protocol-relative, non-HTTP(S), credentialed, or malformed
+    # actions fail closed. origin_for_url() maps wss->https, so require the
+    # explicit HTTP(S) scheme and string typing before the comparison.
     final_origin = origin_for_url(resolution.final_url)
     for node in _mapping_nodes(evidence):
         for raw_key, value in node.items():
             if normalise_evidence_key(raw_key) not in {"action", "formaction"}:
                 continue
-            if not isinstance(value, str) or not value.strip():
+            if isinstance(value, str) and not value.strip():
                 continue
+            if not isinstance(value, str):
+                return "resolution_contract_invalid"
             try:
-                if "://" in value and origin_for_url(value) != final_origin:
+                resolved_action = urljoin(resolution.final_url, value.strip())
+                if urlsplit(resolved_action).scheme.casefold() not in {"http", "https"}:
+                    return "resolution_contract_invalid"
+                if origin_for_url(resolved_action) != final_origin:
                     return "resolution_contract_invalid"
             except ValueError:
                 return "resolution_contract_invalid"
@@ -945,16 +1092,26 @@ class TargetResolutionService:
         handoff: dict[str, object] = {}
         resolution: TargetResolution | None = None
         resolver_error = ""
+        resolver_error_detail = ""
         if resolver is not None:
             try:
                 raw = resolver(context) if callable(resolver) else resolver.resolve(context)
                 resolution, handoff = self._resolver_result(raw)
-            except ValueError:
+            except ValueError as exc:
                 # A malformed typed result is a fail-closed resolver error.
                 # Persist the unresolved attempt and human next action rather
                 # than turning an internal browser/parser failure into a
-                # false success or an unrecorded 500.
+                # false success or an unrecorded 500.  The sanitised message
+                # is kept as evidence (and logged) so the true defect stays
+                # visible; the pass/fail outcome is unchanged.
                 resolver_error = "contract_invalid"
+                resolver_error_detail = _sanitise_resolver_error_detail(exc)
+                logger.warning(
+                    "target resolver contract invalid for opportunity %s: %s",
+                    opportunity_id,
+                    resolver_error_detail,
+                    exc_info=True,
+                )
             except Exception as exc:  # noqa: BLE001 - browser failure is a human boundary
                 from app.services.resolution_apply_click import ApplyClickSafetyViolation
 
@@ -973,7 +1130,18 @@ class TargetResolutionService:
                 final_url=context.source_url,
                 kind=TargetKind.UNRESOLVED,
                 reason_codes=(reason,),
-                evidence={"resolver_error": resolver_error} if resolver_error else {},
+                evidence=(
+                    {
+                        "resolver_error": resolver_error,
+                        **(
+                            {"resolver_error_detail": resolver_error_detail}
+                            if resolver_error_detail
+                            else {}
+                        ),
+                    }
+                    if resolver_error
+                    else {}
+                ),
             )
 
         if resolution is not None and self._is_apply_click_destination_mismatch(
@@ -1260,6 +1428,15 @@ class TargetResolutionService:
             if result.verified_for_automation
             else ""
         )
+        if result.verified_for_automation and not binding_reason:
+            # Direct record() must enforce the same full verified-target
+            # contract as resolve(); it cannot bypass validation. A
+            # contract error persists as a failed attempt with a precise
+            # bounded reason, never as a verified success.
+            try:
+                validate_target_resolution_contract(result)
+            except ValueError:
+                binding_reason = "resolution_contract_invalid"
         if binding_reason:
             safe_reason_codes.append(_sanitise_text(binding_reason))
             attempt_kind = TargetKind.UNRESOLVED
@@ -1359,6 +1536,11 @@ class TargetResolutionService:
             "promoted": promote,
             "reason_codes": safe_reason_codes,
         }
+        error_detail = persisted_evidence.get("resolver_error_detail")
+        if isinstance(error_detail, str) and error_detail.strip():
+            audit_details["resolver_error_detail"] = _sanitise_text(error_detail)[
+                :_MAX_RESOLVER_ERROR_DETAIL
+            ]
         apply_hop = persisted_evidence.get("apply_hop")
         role_identity = (
             apply_hop.get("role_identity")

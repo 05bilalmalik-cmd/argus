@@ -171,14 +171,30 @@ def test_new_provider_detection_ignores_labels_and_html():
         assert AdapterRegistry().detect(result, f'<main data-ats="{provider}">').name == "generic"
 
 
-def test_new_provider_custom_marketing_bundle_cannot_enable_adapter():
+# SECURITY: a page-supplied identity bundle on a custom domain is read from
+# the employer's own page DOM/JSON-LD and is attacker-controllable
+# (app/services/navigator.py:1716-1930), so `ats == provider` inside the same
+# bundle is self-agreement, not independent corroboration. A bare marketing
+# bundle must leave the resolution unverified and the registry on generic.
+# Do NOT "fix" a red test here by restoring self-corroboration.
+def test_new_provider_custom_marketing_bundle_alone_does_not_enable_adapter():
     for provider, url in (("smartrecruiters", "https://careers.acme.example/jobs/123"), ("workable", "https://jobs.acme.example/analyst")):
         result = TargetResolution(
             source_url=url, final_url=url, kind=TargetKind.APPLICATION_ENTRY, provider=provider, identity_verified=True,
             evidence={"ats": provider, "employer": "Acme", "role": "Summer Analyst", "requisition_id": "REQ-123", "form_id": "application-form"},
         )
-        assert result.verified_for_automation is True
+        assert result.verified_for_automation is False
         assert AdapterRegistry().detect(result).name == "generic"
+
+    # POSITIVE CONTROLS: trusted provider hosts with structured-feed proof
+    # still verify and still select their adapters (guards over-correction).
+    for provider, url in (("smartrecruiters", "https://jobs.smartrecruiters.com/acme/123-role"), ("workable", "https://apply.workable.com/acme/j/ABC123/")):
+        trusted = TargetResolution(
+            source_url=url, final_url=url, kind=TargetKind.APPLICATION_ENTRY, provider=provider, identity_verified=True,
+            evidence={"structured_feed": f"{provider}:acme"},
+        )
+        assert trusted.verified_for_automation is True
+        assert AdapterRegistry().detect(trusted).name == provider
 
 
 def test_new_provider_loopback_exception_requires_synthetic_lab_evidence():

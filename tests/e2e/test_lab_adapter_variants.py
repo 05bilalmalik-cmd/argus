@@ -22,7 +22,7 @@ def _configure_candidate(base_url: str) -> None:
             "first_name": "Demo",
             "last_name": "Candidate",
             "email": "demo@example.test",
-            "university": "Example University",
+            "university": "Lancaster University",
             "degree": "BSc Finance",
             "graduation_year": 2028,
             "work_authorisation": "Approved local laboratory wording",
@@ -214,11 +214,23 @@ def _assert_step_one_prefill(server, monkeypatch, scenario: str, adapter: str):
         assert snapshot.worker_alive is True
         result = navigator.journey_result(session_id)
         assert result["state"] == "NEEDS_USER"
-        assert result["risk_level"] == 0
-        assert not result["blocked_reasons"]
-        assert result["reason"] == (
-            "Prefill complete without advancing — human review is required for the remaining steps"
-        )
+        if scenario == "workday-journey":
+            # Legal-free first step: prefill stops without advancing.
+            assert result["risk_level"] == 0
+            assert not result["blocked_reasons"]
+            assert result["reason"] == (
+                "Prefill complete without advancing — human review is required for the remaining steps"
+            )
+        else:
+            # Provider step-one carries a required legal sponsorship
+            # declaration that is never auto-filled (fail closed), so the
+            # honest contract is a legal handoff at risk 3. The
+            # no-Next/no-POST invariant below is unchanged for both.
+            assert result["risk_level"] == 3
+            assert tuple(result["blocked_reasons"]) == ("approved_legal_answer_missing",)
+            assert result["reason"] == (
+                "Approved fields were prefilled; human review is required for the remaining questions"
+            )
         # step_index counts completed Next transitions, not fill/reinspection passes.
         assert result["step_index"] == 0
         assert len(observations) == 1
@@ -246,14 +258,17 @@ def test_multistep_prefill_hands_off_on_first_step_without_next_or_post(
     assert dom["provider"] == {"step": 0, "nextClicks": 0, "distractionClicks": 0}
     assert dom["fields"]["email"] == "demo@example.test"
     assert dom["fields"]["graduation_year"] == "2028"
-    assert dom["fields"]["sponsor"] == "no"
+    # Legal declarations fail closed: the stored sponsorship answer is never
+    # auto-filled, so the radio stays unchecked (the DOM observer only
+    # records checked radios).
+    assert "sponsor" not in dom["fields"]
     assert len(dom["fields"]["cv"]) == 1
     assert dom["fields"]["cv"][0]["size"] > 0
 
 
 @pytest.mark.parametrize(
     ("scenario", "adapter"),
-    [("greenhouse", "greenhouse"), ("lever", "lever"), ("workday", "workday")],
+    [("greenhouse-legal-free", "greenhouse"), ("lever-legal-free", "lever"), ("workday-legal-free", "workday")],
 )
 def test_ats_variants_detect_fill_and_submit_once(
     live_server, scenario: str, adapter: str
@@ -280,9 +295,9 @@ def test_ats_variants_detect_fill_and_submit_once(
 @pytest.mark.parametrize(
     ("scenario", "adapter", "expected_error"),
     [
-        ("duplicate-controls", "greenhouse", ""),
-        ("ambiguous-submit", "greenhouse", "Ambiguous"),
-        ("absent-submit", "greenhouse", "No visible submission"),
+        ("duplicate-controls-legal-free", "greenhouse", ""),
+        ("ambiguous-submit-legal-free", "greenhouse", "Ambiguous"),
+        ("absent-submit-legal-free", "greenhouse", "No visible submission"),
     ],
 )
 def test_submit_controls_fail_closed_without_duplicate_submission(
@@ -296,7 +311,7 @@ def test_submit_controls_fail_closed_without_duplicate_submission(
     payload = outcome.json()
     submissions = httpx.get(f"{live_server.base_url}/api/lab/submissions", timeout=10).json()
 
-    if scenario == "duplicate-controls":
+    if scenario == "duplicate-controls-legal-free":
         assert payload["state"] == "CONFIRMATION_VERIFIED"
         assert len(submissions) == 1
     else:

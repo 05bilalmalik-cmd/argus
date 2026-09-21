@@ -122,7 +122,7 @@ _FIRST_PARTY_REQUEST_FIELDS = {
             None,
         ),
         (
-            "https://email-address-validator.us.greenhouse.io/address/validate?email=alex%40example.test",
+            "https://email-address-validator.us.greenhouse.io/address/validate?email=demo%40example.test",
             "HEAD",
             "fetch",
             "data_bearing",
@@ -204,12 +204,12 @@ def test_exact_greenhouse_service_hosts_are_nonfatal_metadata_only(
     ("request_path", "sentinel"),
     [
         (
-            "/address/validate/alex.path.sentinel@example.test",
-            "alex.path.sentinel@example.test",
+            "/address/validate/demo.candidate@example.test",
+            "demo.candidate@example.test",
         ),
         (
-            "/address/validate/alex%2Epath%2Esentinel%40example%2Etest",
-            "alex%2Epath%2Esentinel%40example%2Etest",
+            "/address/validate/demo%2Epath%2Esentinel%40example%2Etest",
+            "demo%2Epath%2Esentinel%40example%2Etest",
         ),
     ],
     ids=["literal-pii-path", "percent-encoded-pii-path"],
@@ -241,7 +241,7 @@ def test_first_party_consequence_requires_the_exact_measured_service_path(
     [
         (
             "https://job-boards.cdn.greenhouse.io/assets/flags-a2kmUSbF.webp"
-            "?email=alex%40example.test",
+            "?email=demo%40example.test",
             "image",
         ),
     ],
@@ -274,7 +274,7 @@ def test_self_service_endpoint_with_candidate_query_is_first_party() -> None:
     functional query params (e.g. job_post_id=) are recognised as non-PII
     metadata, not exfiltrated candidate data."""
     decision = classify_blocked_request_impact(
-        url="https://my.greenhouse.io/users/self?email=alex%40example.test",
+        url="https://my.greenhouse.io/users/self?email=demo%40example.test",
         method="GET",
         resource_type="fetch",
         is_navigation_request=False,
@@ -561,9 +561,9 @@ def test_manifest_match_remains_browser_blocked_but_does_not_stop_prefill() -> N
         _RouteRequest(
             url=(
                 "https://email-address-validator.us.greenhouse.io/address/validate"
-                "?email=alex%40example.test#candidate-fragment"
+                "?email=demo%40example.test#candidate-fragment"
             ),
-            headers={"x-candidate-email": "alex@example.test"},
+            headers={"x-candidate-email": "demo.candidate@example.test"},
         )
     )
     worker._route(route)
@@ -706,9 +706,9 @@ def test_first_party_evidence_is_private_and_keeps_truthful_blocked_subset() -> 
             _RouteRequest(
                 url=(
                     "https://email-address-validator.us.greenhouse.io/address/validate"
-                    "?email=alex%40example.test#candidate-fragment"
+                    "?email=demo%40example.test#candidate-fragment"
                 ),
-                headers={"x-candidate-email": "alex@example.test"},
+                headers={"x-candidate-email": "demo.candidate@example.test"},
             )
         )
     )
@@ -746,7 +746,7 @@ def test_first_party_evidence_is_private_and_keeps_truthful_blocked_subset() -> 
         events.append(worker.event_queue.get_nowait())
     evidence = repr((worker._egress_records, events, result))
     for secret in (
-        "alex@example.test",
+        "demo.candidate@example.test",
         "221B Baker Street",
         "candidate-fragment",
         "x-candidate-email",
@@ -761,12 +761,12 @@ def test_first_party_evidence_is_private_and_keeps_truthful_blocked_subset() -> 
     ("request_path", "sentinel"),
     [
         (
-            "/address/validate/alex.navigator.path@example.test",
-            "alex.navigator.path@example.test",
+            "/address/validate/demo.candidate@example.test",
+            "demo.candidate@example.test",
         ),
         (
-            "/address/validate/alex%2Enavigator%2Epath%40example%2Etest",
-            "alex%2Enavigator%2Epath%40example%2Etest",
+            "/address/validate/demo%2Enavigator%2Epath%40example%2Etest",
+            "demo%2Enavigator%2Epath%40example%2Etest",
         ),
     ],
     ids=["literal-pii-path", "percent-encoded-pii-path"],
@@ -820,13 +820,13 @@ def test_non_prefill_request_events_preserve_legacy_query_free_service_paths(
 ) -> None:
     """Route-time PREFILL privacy must not rewrite REVIEW or SUBMIT evidence."""
 
-    request_path = "/address/validate/alex.legacy.path@example.test"
+    request_path = "/address/validate/demo.candidate@example.test"
     worker = _navigator_worker(mode=mode, enabled=True)
     route = _Route(
         _RouteRequest(
             url=(
                 "https://email-address-validator.us.greenhouse.io"
-                f"{request_path}?address=alex%40example.test#legacy-fragment"
+                f"{request_path}?address=demo%40example.test#legacy-fragment"
             ),
         )
     )
@@ -853,19 +853,19 @@ def test_final_manifest_reapplies_the_private_first_party_whitelist() -> None:
         {
             "blocked_resources": [
                 {
-                    "url": "https://my.greenhouse.io/validate?email=alex%40example.test",
-                    "headers": {"x-candidate-email": "alex@example.test"},
+                    "url": "https://my.greenhouse.io/validate?email=demo%40example.test",
+                    "headers": {"x-candidate-email": "demo.candidate@example.test"},
                     "host": "my.greenhouse.io",
-                    "path": "/validate?email=alex%40example.test",
+                    "path": "/validate?email=demo%40example.test",
                     "reason": "sentinel-free-text",
                 }
             ],
             "first_party_requests": [
                 {
-                    "url": "https://my.greenhouse.io/validate?email=alex%40example.test",
-                    "headers": {"x-candidate-email": "alex@example.test"},
+                    "url": "https://my.greenhouse.io/validate?email=demo%40example.test",
+                    "headers": {"x-candidate-email": "demo.candidate@example.test"},
                     "host": "my.greenhouse.io",
-                    "path": "/validate?email=alex%40example.test",
+                    "path": "/validate?email=demo%40example.test",
                     "method": "GET",
                     "resource_type": "fetch",
                     "initiator": "https://boards.greenhouse.io/acme/jobs/1234567?location=221B",
@@ -884,7 +884,7 @@ def test_final_manifest_reapplies_the_private_first_party_whitelist() -> None:
     )
 
     evidence = repr(manifest)
-    assert "alex@example.test" not in evidence
+    assert "demo.candidate@example.test" not in evidence
     assert "?email=" not in evidence
     assert "?location=" not in evidence
     assert "headers" not in evidence
@@ -1007,10 +1007,10 @@ def test_non_phase21_scopes_preserve_sanitised_legacy_blocked_resources(
         {
             "blocked_resources": [
                 {
-                    "url": "https://my.greenhouse.io/validate?email=alex%40example.test",
-                    "headers": {"x-candidate-email": "alex@example.test"},
+                    "url": "https://my.greenhouse.io/validate?email=demo%40example.test",
+                    "headers": {"x-candidate-email": "demo.candidate@example.test"},
                     "host": "my.greenhouse.io",
-                    "path": "/validate?email=alex%40example.test",
+                    "path": "/validate?email=demo%40example.test",
                     "method": "GET",
                     "resource_type": "fetch",
                     "initiator": "https://boards.greenhouse.io/acme/jobs/1234567?location=221B",
@@ -1033,7 +1033,7 @@ def test_non_phase21_scopes_preserve_sanitised_legacy_blocked_resources(
     assert blocked[0]["initiator"] == "https://boards.greenhouse.io/acme/jobs/1234567"
     assert blocked[0]["reason"] == "legacy_blocked_resource"
     evidence = repr(blocked)
-    for secret in ("alex@example.test", "?email=", "?location=", "headers"):
+    for secret in ("demo.candidate@example.test", "?email=", "?location=", "headers"):
         assert secret not in evidence
 
 
@@ -1041,7 +1041,7 @@ def test_disabled_first_party_mode_preserves_phase17_route_record_shape() -> Non
     """Adding private-evidence fields while disabled would break the rollback."""
 
     worker = _navigator_worker(enabled=False)
-    request_url = "https://my.greenhouse.io/validate?email=alex%40example.test"
+    request_url = "https://my.greenhouse.io/validate?email=demo%40example.test"
     route = _Route(_RouteRequest(url=request_url))
     worker._route(route)
 

@@ -24,9 +24,19 @@ The default configuration binds to `127.0.0.1`, uses `OFF`, leaves live submissi
 
 ## Public source status
 
-This repository contains a privacy-sanitised source snapshot, including the
-browser/form repairs and explicit disposable launcher sandbox. It is not an
-installed upgrade or a signed binary release.
+This repository contains the privacy-sanitised integrated source snapshot:
+no-login prioritisation, tracker discovery, field-context and month-value
+repairs, typed decisions, scoped target identity, receipt controls, and the
+explicit disposable launcher sandbox. The required E2E inventory includes the
+local-portal and static-legal regression suites without weakening strict
+missing/unexpected-file checks.
+
+The integrated Windows executable has also been built and installed in the
+maintainer's local environment after an authorised backup and restart. That
+local installation is not a signed or generally distributed binary release;
+cloning this repository does not install or arm it. See
+[VERIFICATION.md](VERIFICATION.md) for the distinction between candidate,
+public-source and installation evidence.
 
 **Current limitation:** autonomous end-to-end applications to real employers
 have not been demonstrated. Local/synthetic test success is not evidence of

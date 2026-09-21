@@ -226,6 +226,8 @@ _CORE_E2E_FILES = frozenset(
         "test_apply_ui.py",
         "test_dashboard.py",
         "test_lab_adapter_variants.py",
+        "test_local_portal_end_to_end.py",
+        "test_static_legal_boundaries_campaign.py",
         "test_submission_unknown.py",
     }
 )

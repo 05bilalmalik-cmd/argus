@@ -62,7 +62,6 @@ _PATTERNS: tuple[tuple[ProgrammeType, tuple[re.Pattern[str], ...]], ...] = (
             re.compile(r"placement\s+year", re.I),
             re.compile(r"sandwich\s+(?:year|placement)", re.I),
             re.compile(r"industry\s+placement", re.I),
-            re.compile(r"\bplacement\b(?!.*(consult|student))", re.I),
         ),
     ),
     (
@@ -99,6 +98,10 @@ def classify_programme(*texts: str) -> ProgrammeType:
     for programme_type, patterns in _PATTERNS:
         if any(p.search(blob) for p in patterns):
             return programme_type
+    # Generic placement is a fallback: seasonal placements are summer, while
+    # explicit industrial/year-long patterns above still take precedence.
+    if re.search(r"\bplacement\b(?!.*consult)", blob, re.I):
+        return ProgrammeType.YEAR_IN_INDUSTRY
     if _GENERIC_INTERNSHIP.search(blob):
         return ProgrammeType.SUMMER
     return ProgrammeType.OTHER

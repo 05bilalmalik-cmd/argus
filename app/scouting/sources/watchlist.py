@@ -32,6 +32,30 @@ WATCHLIST: dict[str, dict[str, list[str]]] = {
     # --- Advisory / banking (live boards) ---
     "LionTree": {"greenhouse": ["liontree"], "lever": []},
     "William Blair": {"greenhouse": ["williamblair"], "lever": []},
+    # --- Strong-tech expansion 2026-09-18 (high-confidence public boards) ---
+    # Mirrors greenhouse.ORGS / lever.COMPANIES so the watchlist-driven design
+    # stays coherent. build_sources() dedupes via set union, so overlap is fine.
+    "OpenAI": {"greenhouse": ["openai"], "lever": []},
+    "Anthropic": {"greenhouse": ["anthropic"], "lever": []},
+    "Stripe": {"greenhouse": ["stripe"], "lever": []},
+    "Robinhood": {"greenhouse": ["robinhood"], "lever": []},
+    "Coinbase": {"greenhouse": ["coinbase"], "lever": []},
+    "Airbnb": {"greenhouse": ["airbnb"], "lever": []},
+    "Databricks": {"greenhouse": ["databricks"], "lever": []},
+    "DoorDash": {"greenhouse": ["doordash"], "lever": []},
+    "Lyft": {"greenhouse": ["lyft"], "lever": []},
+    "HubSpot": {"greenhouse": ["hubspot"], "lever": []},
+    "Dropbox": {"greenhouse": ["dropbox"], "lever": []},
+    "Twilio": {"greenhouse": ["twilio"], "lever": []},
+    "Netflix": {"greenhouse": [], "lever": ["netflix"]},
+    "Duolingo": {"greenhouse": [], "lever": ["duolingo"]},
+    "Affirm": {"greenhouse": [], "lever": ["affirm"]},
+    "Asana": {"greenhouse": [], "lever": ["asana"]},
+    "Coursera": {"greenhouse": [], "lever": ["coursera"]},
+    "Eventbrite": {"greenhouse": [], "lever": ["eventbrite"]},
+    # Squarepoint: lever slug unverified; retained so coverage is not dropped
+    # (a dead slug 404s and collect_all() skips it harmlessly).
+    "Squarepoint Capital": {"greenhouse": [], "lever": ["squarepoint"]},
     # --- Firms with NO public Greenhouse/Lever board (verified 404 / own ATS) ---
     # Citadel(+Securities): own Workday portal. HRT: own portal. DRW: own portal.
     # Two Sigma, SIG, Five Rings, Belvedere, Millennium, Jefferies, Houlihan

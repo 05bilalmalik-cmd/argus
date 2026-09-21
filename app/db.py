@@ -16,7 +16,7 @@ from app.config import Settings
 
 
 LOGGER = logging.getLogger(__name__)
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # ``create_all`` adds this index for new databases through the model's
 # ``UniqueConstraint``.  Existing 0.1.x databases need an explicit additive
@@ -44,6 +44,9 @@ _ADDITIVE_MIGRATIONS: dict[str, dict[str, str]] = {
     "automation_runs": {
         "risk_assessed_at": "DATETIME",
         "risk_assessment_source": "VARCHAR(120)",
+    },
+    "candidate_profiles": {
+        "admissible_graduation_years_json": "TEXT NOT NULL DEFAULT '[]'",
     },
 }
 

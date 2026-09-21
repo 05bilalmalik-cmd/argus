@@ -866,6 +866,54 @@ def _plausible_date(value: str) -> bool:
     return False
 
 
+def _is_native_month_control(field: InspectedField) -> bool:
+    """Detect a native ``type=month`` control without consulting its mapping.
+
+    A year-only value (``2028``) is plausible as a calendar year but the
+    browser month widget only accepts ``YYYY-MM``; passing anything else
+    throws at fill time. This gate runs BEFORE the adapter fill so the
+    pipeline escalates instead of attempting the fill.
+    """
+    return "month" in {
+        str(field.question.field_type or "").casefold(),
+        str(field.control_type or "").casefold(),
+    }
+
+
+_MONTH_VALUE_RE = re.compile(r"([0-9]{4})-(0[1-9]|1[0-2])")
+
+
+def _authoritative_graduation_year(profile_values: Mapping[str, object]) -> int | None:
+    """Require agreeing canonical evidence; a programme tier only constrains it."""
+    years: set[int] = set()
+    for key in (
+        CanonicalKey.GRADUATION_YEAR.value,
+        CanonicalKey.EDUCATION_END_YEAR.value,
+    ):
+        candidate = profile_values.get(key)
+        if candidate is None:
+            continue
+        text = str(candidate).strip()
+        if re.fullmatch(r"[0-9]{4}", text):
+            year = int(text)
+        elif (month_match := _MONTH_VALUE_RE.fullmatch(text)) is not None:
+            year = int(month_match.group(1))
+        else:
+            return None
+        if not 1900 <= year <= 2100:
+            return None
+        years.add(year)
+    if len(years) != 1:
+        return None
+    year = next(iter(years))
+    tier = profile_values.get("guard.programme_graduation_tier")
+    if tier is not None:
+        tier_text = str(tier).strip()
+        if not re.fullmatch(r"[0-9]{4}", tier_text) or int(tier_text) != year:
+            return None
+    return year
+
+
 def _plausible_study_level(value: str) -> bool:
     """Accept only the closed, common study-level forms used by the guard."""
 
@@ -1092,6 +1140,20 @@ _LEGAL_EVIDENCE_ONLY_KEYS = frozenset(
     }
 )
 
+# SAFETY (fail closed): legal/eligibility declarations whose stored answers
+# carry no jurisdiction scope must never auto-fill.  The stored profile and
+# answer-bank wording is UK-scoped with no country metadata, and the
+# opportunity record has no reliable jurisdiction field, so an auto-answer
+# could assert a false statement to a foreign employer.  Criminal-record
+# declarations are additionally never auto-answered under any circumstance.
+_LEGAL_DECLARATION_GATED_KEYS = frozenset(
+    {
+        CanonicalKey.WORK_AUTHORISATION,
+        CanonicalKey.SPONSORSHIP,
+        CanonicalKey.CRIMINAL_RECORD,
+    }
+)
+
 
 def build_fill_plan(
     fields: list[InspectedField],
@@ -1203,7 +1265,15 @@ def build_fill_plan(
             actions.append(FieldAction(field, mapping, None, "unmapped", status))
             continue
 
-        if key in {CanonicalKey.CV, CanonicalKey.COVER_LETTER}:
+        if key in _LEGAL_DECLARATION_GATED_KEYS:
+            # Fail closed: a legal/eligibility declaration is never
+            # auto-filled, because the stored answer is not known to apply
+            # to this posting's jurisdiction.  Fall into the `missing`
+            # branch below so the field is left blank for the human exactly
+            # like any other question with no approved answer: a required
+            # declaration blocks with `approved_legal_answer_missing`.
+            resolved = None
+        elif key in {CanonicalKey.CV, CanonicalKey.COVER_LETTER}:
             resolved = _coerce_resolved(document_lookup(key.value))
         elif key is CanonicalKey.MOTIVATION:
             resolved = _coerce_resolved(answer_lookup(key.value, field.question.label))
@@ -1238,6 +1308,67 @@ def build_fill_plan(
             continue
 
         value = _normalise_option_value(resolved.value, field)
+        if _is_native_month_control(field):
+            # SAFETY (fail closed): a native month control accepts ONLY an
+            # exact, explicitly approved, calendar-valid YYYY-MM value. A
+            # year-only value must NEVER be padded with a guessed month, and
+            # malformed/whitespace/junk/bool-derived values cannot resolve.
+            # Graduation-derived months additionally require year consistency
+            # against the framed profile evidence.
+            month_match = _MONTH_VALUE_RE.fullmatch(value)
+            month_year: int | None = None
+            if month_match is not None and 1900 <= int(month_match.group(1)) <= 2100:
+                month_year = int(month_match.group(1))
+            else:
+                month_match = None
+            if month_match is None:
+                requirement = "required" if field.question.required else "optional"
+                findings.append(
+                    RiskFinding(
+                        "graduation_month_missing",
+                        2 if field.question.required else 1,
+                        (
+                            "Native month control requires an explicit calendar-valid "
+                            f"YYYY-MM value for {requirement} field "
+                            f"({field.question.label}); year-only or malformed values "
+                            "cannot be completed without fabricating a month — "
+                            "human review required"
+                        ),
+                    )
+                )
+                actions.append(
+                    FieldAction(
+                        field,
+                        mapping,
+                        None,
+                        "month_guard",
+                        "blocked" if field.question.required else "omitted",
+                    )
+                )
+                continue
+            if key.value in _PROGRAMME_GRADUATION_DERIVED_KEYS:
+                authoritative = _authoritative_graduation_year(profile_values)
+                if authoritative is None or month_year != authoritative:
+                    findings.append(
+                        RiskFinding(
+                            "graduation_month_mismatch",
+                            2 if field.question.required else 1,
+                            (
+                                "Month value year does not match the framed graduation-year "
+                                f"evidence for {field.question.label}; human review required"
+                            ),
+                        )
+                    )
+                    actions.append(
+                        FieldAction(
+                            field,
+                            mapping,
+                            None,
+                            "month_guard",
+                            "blocked" if field.question.required else "omitted",
+                        )
+                    )
+                    continue
         if (
             field.control_type.casefold() == "checkbox"
             and key is CanonicalKey.EDUCATION_SUBJECT
@@ -3156,6 +3287,102 @@ class AutomationRunner:
                 expected_final_url=expected_final_url,
             )
 
+    def _finalize_confirmed_receipt(
+        self,
+        session: Session,
+        application: Application,
+        submission_intent: SubmissionIntent,
+        result: Mapping[str, object],
+        receipt: Receipt | None,
+    ) -> None:
+        """Atomically persist application confirmation and intent CONFIRMED.
+
+        FINAL RECEIPT PERSISTENCE: the strict correlated receipt, the
+        ``CLICKED -> CONFIRMED`` intent compare-and-set, and the application
+        terminal confirmation (state, reference, applied date) commit in one
+        request-session transaction, or none of them is durable. A crash
+        before the commit therefore never leaves ``CONFIRMATION_VERIFIED``
+        with intent ``CLICKED``; the durable row stays ``CLICKED`` and
+        non-replayable. A crash after the commit finds both ``CONFIRMED``.
+
+        This runs strictly after browser execution has finished (the journey
+        result is already in ``result``), so no DB write transaction is held
+        across browser execution. No independent session is opened here:
+        opening a second SQLite writer while this session holds pending
+        writes would risk a lock wait. The legacy independent-session
+        ``_confirm_submission_intent`` helper is retained for other seams
+        but must not be used on this path.
+        """
+
+        from app.services.submission_intents import SubmissionIntentService
+
+        if submission_intent is None:
+            raise RuntimeError("Submission intent is missing for confirmation")
+        evidence = result.get("receipt_evidence")
+        if not isinstance(evidence, Mapping):
+            raise RuntimeError("Strict receipt evidence is missing")
+        before_raw = evidence.get("before")
+        after_raw = evidence.get("after")
+        bound_target = evidence.get("bound_target")
+        if not isinstance(before_raw, Mapping) or not isinstance(after_raw, Mapping):
+            raise RuntimeError("Strict receipt baseline or post-click evidence is missing")
+        declared = {item.name for item in fields(ReceiptEvidence)}
+        before = ReceiptEvidence(
+            **{key: value for key, value in before_raw.items() if key in declared}
+        )
+        after = ReceiptEvidence(
+            **{key: value for key, value in after_raw.items() if key in declared}
+        )
+        if not isinstance(bound_target, Mapping):
+            raise RuntimeError("Exact submission target binding is missing")
+        expected_final_url = result.get("expected_final_url")
+        if not isinstance(expected_final_url, str) or not expected_final_url.strip():
+            raise RuntimeError("Verified expected final URL evidence is missing")
+        # Re-read the owner-committed CLICKED status in this session. The
+        # request-session identity map still holds the stale PREPARED object
+        # from before the owner callback; without this refresh the CAS would
+        # expect the wrong status.
+        try:
+            session.refresh(submission_intent, attribute_names=["status"])
+        except Exception as exc:
+            raise RuntimeError("Submission intent no longer exists") from exc
+        if submission_intent is None or str(submission_intent.application_id) != str(
+            application.id
+        ):
+            raise RuntimeError("Submission intent is missing or bound to another application")
+        bound_intent = {
+            "id": str(submission_intent.id),
+            "nonce": str(submission_intent.nonce),
+            "attempt_id": str(submission_intent.attempt_id),
+        }
+        # Strict receipt validation + CLICKED -> CONFIRMED CAS + application
+        # terminal confirmation share one SAVEPOINT inside the request
+        # transaction. A validation/CAS/transition failure rolls back only
+        # this savepoint, preserving the outer AutomationRun writes for the
+        # truthful UNKNOWN reconciliation below.
+        with session.begin_nested():
+            SubmissionIntentService(session).confirm_with_receipt_pending(
+                submission_intent,
+                before,
+                after,
+                bound_target=dict(bound_target),
+                bound_intent=bound_intent,
+                expected_final_url=expected_final_url,
+            )
+            # Application terminal confirmation joins the same transaction.
+            if ApplicationState(application.state) == ApplicationState.FILLING:
+                self._transition(session, application, ApplicationState.READY_TO_SUBMIT)
+            if ApplicationState(application.state) == ApplicationState.READY_TO_SUBMIT:
+                self._transition(session, application, ApplicationState.SUBMITTED)
+            if ApplicationState(application.state) == ApplicationState.SUBMITTED:
+                self._transition(session, application, ApplicationState.CONFIRMATION_VERIFIED)
+            application.submission_reference = receipt.reference if receipt else ""
+            application.applied_at = datetime.now(timezone.utc)
+            session.flush()
+        # One durable commit for receipt + intent + application together
+        # (alongside the already-flushed AutomationRun row).
+        session.commit()
+
     def _approved_answers(
         self,
         session: Session,
@@ -4021,29 +4248,16 @@ class AutomationRunner:
                 self._transition(session, application, ApplicationState.READY_TO_SUBMIT)
         elif state_text == "CONFIRMED":
             try:
-                if current_state == ApplicationState.FILLING:
-                    self._transition(session, application, ApplicationState.READY_TO_SUBMIT)
-                if ApplicationState(application.state) == ApplicationState.READY_TO_SUBMIT:
-                    self._transition(session, application, ApplicationState.SUBMITTED)
-                if ApplicationState(application.state) == ApplicationState.SUBMITTED:
-                    self._transition(session, application, ApplicationState.CONFIRMATION_VERIFIED)
-                application.submission_reference = receipt.reference if receipt else ""
-                application.applied_at = datetime.now(timezone.utc)
-                # Release the request-session write lock before the strict
-                # intent CAS runs in its independent persistence session.
-                # This preserves the owner/request thread split without
-                # allowing SQLite (or another transactional backend) to turn
-                # the final evidence write into a lock wait.
-                session.commit()
-                if submission_intent is not None:
-                    # Intent confirmation is deliberately last: if local
-                    # application persistence fails after the external POST,
-                    # the durable row is marked UNKNOWN rather than claiming
-                    # a clean confirmation.
-                    self._confirm_submission_intent(
-                        str(submission_intent.id),
-                        result,
-                    )
+                # Atomic finalization: strict receipt + intent CONFIRMED +
+                # application terminal confirmation commit together in the
+                # request session. No independent writer is opened here.
+                self._finalize_confirmed_receipt(
+                    session,
+                    application,
+                    submission_intent,
+                    result,
+                    receipt,
+                )
             except Exception as exc:  # noqa: BLE001 - click already crossed boundary
                 # The employer-side effect may be real even when local state
                 # persistence fails. Preserve the one-shot intent as unknown

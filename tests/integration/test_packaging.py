@@ -41,6 +41,8 @@ def _fixture_repository(root: Path) -> None:
         "tests/e2e/test_apply_ui.py",
         "tests/e2e/test_dashboard.py",
         "tests/e2e/test_lab_adapter_variants.py",
+        "tests/e2e/test_local_portal_end_to_end.py",
+        "tests/e2e/test_static_legal_boundaries_campaign.py",
         "tests/e2e/test_submission_unknown.py",
     ):
         _write(root, relative)
@@ -61,7 +63,7 @@ def _git(root: Path) -> None:
 def _evidence(root: Path) -> dict[str, object]:
     evidence_root = root / "release-evidence"
     evidence_root.mkdir()
-    names = ["unit", "integration", "tests/e2e/test_adversarial_flows.py", "tests/e2e/test_application_flows.py", "tests/e2e/test_application_navigator_journeys.py", "tests/e2e/test_apply_ui.py", "tests/e2e/test_dashboard.py", "tests/e2e/test_lab_adapter_variants.py", "tests/e2e/test_submission_unknown.py", "compile", "cli_help", "cli_safe_smoke", "audit_fresh_temp", "migration_fresh_temp", "privacy_source"]
+    names = ["unit", "integration", "tests/e2e/test_adversarial_flows.py", "tests/e2e/test_application_flows.py", "tests/e2e/test_application_navigator_journeys.py", "tests/e2e/test_apply_ui.py", "tests/e2e/test_dashboard.py", "tests/e2e/test_lab_adapter_variants.py", "tests/e2e/test_local_portal_end_to_end.py", "tests/e2e/test_static_legal_boundaries_campaign.py", "tests/e2e/test_submission_unknown.py", "compile", "cli_help", "cli_safe_smoke", "audit_fresh_temp", "migration_fresh_temp", "privacy_source"]
     logs, steps = [], []
     nonce = "packaging-fixture-provenance-20260825"
     interpreter = Path(sys.executable).resolve()

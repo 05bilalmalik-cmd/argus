@@ -143,7 +143,7 @@ def test_needs_user_event_sends_one_specific_one_line_notification() -> None:
 
 def test_reason_contract_rejects_free_text_and_pii() -> None:
     with pytest.raises(ValueError, match="reason code"):
-        _event(reason="Email alex.pii@example.test about this captcha")
+        _event(reason="Email demo.candidate@example.test about this captcha")
 
 
 def test_reason_contract_rejects_unknown_snake_case_values() -> None:
@@ -246,7 +246,7 @@ def test_serialised_payload_excludes_every_candidate_profile_value() -> None:
         first_name="Demo",
         last_name="Demo",
         preferred_name="Demo",
-        email="alex.pii@example.test",
+        email="demo.candidate@example.test",
         phone="+44-7700-PII-123",
         address_line1="19 PII Example Street",
         city="PII-City",
@@ -1339,7 +1339,7 @@ def test_standalone_navigator_human_boundary_notifies_without_runner(
         created_at=now,
         updated_at=now,
         expires_at=now + timedelta(minutes=5),
-        reason="Captcha near alex.pii@example.test",
+        reason="Captcha near demo.candidate@example.test",
         human_boundary={"kind": "captcha", "reason": "Captcha detected"},
     )
     navigator = SimpleNamespace(all_sessions=lambda: [snapshot])
@@ -1354,7 +1354,7 @@ def test_standalone_navigator_human_boundary_notifies_without_runner(
     assert len(backend.payloads) == 1
     message = str(backend.payloads[0]["message"])
     assert "Captcha" in message
-    assert "alex.pii@example.test" not in message
+    assert "demo.candidate@example.test" not in message
 
 
 def test_navigator_monitor_edge_cache_skips_an_unchanged_snapshot(
@@ -1771,7 +1771,7 @@ def test_notification_event_construction_failure_never_fails_the_run(
         (
             ApplicationState.NEEDS_USER.value,
             ("human_boundary",),
-            {"kind": "captcha", "reason": "Captcha near alex.pii@example.test"},
+            {"kind": "captcha", "reason": "Captcha near demo.candidate@example.test"},
             "Captcha",
         ),
     ],
@@ -1815,7 +1815,7 @@ def test_runner_maps_human_stops_to_controlled_non_pii_reason_codes(
     assert len(backend.payloads) == 1
     message = str(backend.payloads[0]["message"])
     assert expected_reason in message
-    assert "alex.pii@example.test" not in message
+    assert "demo.candidate@example.test" not in message
 
 
 def test_backend_timeout_never_fails_the_application_run(
