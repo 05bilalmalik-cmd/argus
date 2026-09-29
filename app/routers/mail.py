@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.models import EmailMessage
@@ -10,6 +11,12 @@ from app.routers.deps import SessionDep
 from app.services.email import MailService
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
+
+
+class MatchOverridePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    application_id: str | None = Field(default=None, max_length=80)
 
 
 def _serialize(item: EmailMessage) -> dict[str, object]:
@@ -45,3 +52,23 @@ def ingest_mail(
         return _serialize(MailService(session).ingest(content))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/{email_id}/candidates")
+def match_candidates(email_id: str, session: SessionDep) -> dict[str, object]:
+    try:
+        candidates = MailService(session).match_candidates(email_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"email_id": email_id, "candidates": candidates}
+
+
+@router.post("/{email_id}/match")
+def override_match(
+    email_id: str, payload: MatchOverridePayload, session: SessionDep
+) -> dict[str, object]:
+    try:
+        record = MailService(session).override_match(email_id, payload.application_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return _serialize(record)

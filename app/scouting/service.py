@@ -336,6 +336,12 @@ class ScoutService:
                 str(getattr(item, "division", "") or "").strip()
                 or infer_division(item.role_title, item.employer)
             )
+            # Provider requirement facts (TrackrRow only; every other source
+            # yields non-bool/empty getattr defaults identical to today).
+            trackr_eligibility = str(getattr(item, "eligibility_note", "") or "")
+            trackr_cv = getattr(item, "cv_required", None)
+            trackr_cover = getattr(item, "cover_letter_required", None)
+            trackr_written = getattr(item, "written_answers_required", None)
             try:
                 with self.session.begin_nested():
                     candidate = Opportunity(
@@ -355,6 +361,14 @@ class ScoutService:
                         rolling=rolling,
                         application_window_status=window_status.value,
                         trackr_programme_id=trackr_programme_id or None,
+                        cv_required=trackr_cv if isinstance(trackr_cv, bool) else True,
+                        cover_letter_required=trackr_cover
+                        if isinstance(trackr_cover, bool)
+                        else False,
+                        written_answers_required=trackr_written
+                        if isinstance(trackr_written, bool)
+                        else False,
+                        notes=trackr_eligibility[:10000],
                         application_url=(
                             candidate_application_url if is_trackr_live else None
                         ),
@@ -589,10 +603,23 @@ class ScoutService:
                             "rolling": rolling,
                             "application_window_status": window_status.value,
                         }
+                        if isinstance(trackr_cv, bool):
+                            refresh_values["cv_required"] = trackr_cv
+                        if isinstance(trackr_cover, bool):
+                            refresh_values["cover_letter_required"] = trackr_cover
+                        if isinstance(trackr_written, bool):
+                            refresh_values["written_answers_required"] = trackr_written
                         for attribute, value in refresh_values.items():
                             if getattr(record, attribute) != value:
                                 setattr(record, attribute, value)
                                 changed = True
+                        if trackr_eligibility and not (
+                            record.notes or ""
+                        ).strip():
+                            # Fill blank notes only: never overwrite operator
+                            # text with provider prose.
+                            record.notes = trackr_eligibility[:10000]
+                            changed = True
                         if _verified_target(record):
                             if (
                                 candidate_application_url

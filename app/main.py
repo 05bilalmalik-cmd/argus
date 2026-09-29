@@ -135,7 +135,22 @@ def create_app(
         return Response(status_code=204)
 
     @app.get("/healthz")
-    def healthz() -> dict[str, str | bool]:
+    def healthz() -> dict[str, object]:
+        try:
+            from app.scouting.scheduler import read_sweep_health
+
+            sweep = read_sweep_health(resolved.data_dir)
+        except Exception:  # noqa: BLE001 - healthz must never fail on stale state
+            sweep = {}
+        if isinstance(sweep, dict) and sweep.get("at"):
+            if sweep.get("error"):
+                sweep_status = "error"
+            elif sweep.get("skipped"):
+                sweep_status = "skipped"
+            else:
+                sweep_status = "ok"
+        else:
+            sweep_status = "unknown"
         return {
             "status": "ok",
             "service": "ARGUS",
@@ -143,6 +158,11 @@ def create_app(
             "automation_mode": resolved.automation_mode.value,
             "live_submit": resolved.live_submit_enabled,
             "trackr_live": resolved.trackr_live_enabled,
+            "sweep_last_at": sweep.get("at") if isinstance(sweep, dict) else None,
+            "sweep_status": sweep_status,
+            "sweep_live_scrape": sweep.get("live_scrape")
+            if isinstance(sweep, dict)
+            else None,
         }
 
     return app

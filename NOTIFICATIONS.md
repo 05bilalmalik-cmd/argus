@@ -26,6 +26,15 @@ only employer, role title, deadline, and application URL.
 5.  Start ARGUS as usual.  Opportunities discovered during a CSV import, Trackr
     sweep, or saved-HTML scan will now ping your phone.
 
+## Deadline reminders
+
+Each sweep also checks human-blocked applications (`NEEDS_USER`, `NEEDS_OA`)
+whose next action is due within **3 days** (overdue included) and sends one
+`deadline_approaching` reminder each, deep-linked to the exact application.
+The same application/state/reason never notifies twice — in memory and in the
+durable outbox — and the hourly rate limit still applies. Nothing is inferred:
+only actions with a captured deadline are eligible.
+
 ## Configuration reference
 
 | Variable | Default | Description |

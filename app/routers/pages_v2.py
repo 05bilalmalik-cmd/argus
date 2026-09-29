@@ -49,6 +49,7 @@ from app.routers.api import is_target_resolution_failure
 from app.security.audit import AuditInput, append_audit
 from app.services.answers import AnswerService
 from app.services.applications import ApplicationBlockedError, ApplicationService
+from app.services.email import MailService
 from app.services.profile import ProfileService
 from app.services.prefill import (
     HUMAN_BOUNDARY_COPY,
@@ -1343,17 +1344,43 @@ def activity_page(request: Request):
         if mail_order is not None:
             mail_statement = mail_statement.order_by(mail_order.desc())
         mail_records = list(session.scalars(mail_statement.limit(250)).all())
-        mail_rows = [
-            SimpleNamespace(
-                received_at=_first_value(item, "received_at", "created_at"),
-                sender=_first_value(item, "sender", "from_address", "sender_email"),
-                subject=_first_value(item, "subject", default="No subject captured"),
-                classification=_first_value(
-                    item, "classification", "message_type", "status", default="Unclassified"
-                ),
+        mail_service = MailService(session)
+        app_pairs = list(
+            session.execute(
+                select(Application, Opportunity).join(
+                    Opportunity, Application.opportunity_id == Opportunity.id
+                )
+            ).all()
+        )
+        bound_apps = {application.id: opportunity for application, opportunity in app_pairs}
+        mail_rows = []
+        for item in mail_records:
+            bound_opportunity = bound_apps.get(item.application_id) if item.application_id else None
+            if bound_opportunity is not None:
+                match_label = (
+                    f"{getattr(bound_opportunity, 'employer', '')} — "
+                    f"{getattr(bound_opportunity, 'role_title', '')}"
+                )
+                candidates: list[dict[str, object]] = []
+            else:
+                match_label = ""
+                try:
+                    candidates = mail_service.match_candidates(item.id, rows=app_pairs)
+                except (KeyError, ValueError):
+                    candidates = []
+            mail_rows.append(
+                SimpleNamespace(
+                    id=item.id,
+                    received_at=_first_value(item, "received_at", "created_at"),
+                    sender=_first_value(item, "sender", "from_address", "sender_email"),
+                    subject=_first_value(item, "subject", default="No subject captured"),
+                    classification=_first_value(
+                        item, "classification", "message_type", "status", default="Unclassified"
+                    ),
+                    match_label=match_label,
+                    candidates=candidates,
+                )
             )
-            for item in mail_records
-        ]
         context = {
             **_base_v2(request, title="Activity", active="activity", session=session),
             "tab": tab,
@@ -1399,12 +1426,19 @@ def control_page(request: Request):
                 select(ConflictRule).order_by(ConflictRule.employer_pattern, ConflictRule.cycle)
             ).all()
         )
+        try:
+            from app.services.backup import latest_backup
+
+            backup = latest_backup(settings.data_dir)
+        except Exception:  # noqa: BLE001 - a backup card must never break Control
+            backup = None
         context = {
             **_base_v2(request, title="Control", active="control", session=session),
             "environment_settings": environment_settings,
             "environment_flags": environment_settings,
             "conflict_rules": conflict_rules,
             "settings": settings,
+            "backup": backup,
         }
         return templates.TemplateResponse(request, "v2/control.html", context)
 

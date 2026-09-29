@@ -261,10 +261,27 @@ class MailService:
     def __init__(self, session: Session):
         self.session = session
 
-    def _match_application(self, parsed: ParsedEmail) -> Application | None:
-        text = f"{parsed.sender} {parsed.subject} {parsed.body_text}"
+    def score_candidates(
+        self,
+        *,
+        sender: str,
+        subject: str,
+        body_text: str,
+        limit: int = 5,
+        rows=None,  # noqa: ANN001 - preloaded (Application, Opportunity) pairs
+    ) -> list[tuple[Application, int]]:
+        """Score every application against mail text, best first, bounded."""
+
+        try:
+            keep = max(1, min(int(limit), 25))
+        except (TypeError, ValueError):
+            keep = 5
+        text = f"{sender} {subject} {body_text}"
         normalised = _normalise(text)
-        rows = self.session.execute(select(Application, Opportunity).join(Opportunity)).all()
+        if rows is None:
+            rows = self.session.execute(
+                select(Application, Opportunity).join(Opportunity)
+            ).all()
         scored: list[tuple[int, Application]] = []
         for application, opportunity in rows:
             score = 0
@@ -278,7 +295,83 @@ class MailService:
                 score += 8
             if score:
                 scored.append((score, application))
-        return max(scored, key=lambda item: item[0])[1] if scored else None
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [(application, score) for score, application in scored[:keep]]
+
+    def _match_application(self, parsed: ParsedEmail) -> Application | None:
+        top = self.score_candidates(
+            sender=parsed.sender,
+            subject=parsed.subject,
+            body_text=parsed.body_text,
+            limit=1,
+        )
+        return top[0][0] if top else None
+
+    def match_candidates(
+        self, record_id: str, *, limit: int = 5, rows=None  # noqa: ANN001 - preloaded pairs
+    ) -> list[dict[str, object]]:
+        """Return bounded, scored binding candidates for a stored message."""
+
+        record = self.session.get(EmailMessage, record_id)
+        if record is None:
+            raise KeyError(f"Email not found: {record_id}")
+        candidates = []
+        for application, score in self.score_candidates(
+            sender=record.sender or "",
+            subject=record.subject or "",
+            body_text=record.body_text or "",
+            limit=limit,
+            rows=rows,
+        ):
+            opportunity = application.opportunity
+            candidates.append(
+                {
+                    "application_id": application.id,
+                    "employer": str(getattr(opportunity, "employer", "")),
+                    "role": str(getattr(opportunity, "role_title", "")),
+                    "state": str(application.state),
+                    "score": int(score),
+                }
+            )
+        return candidates
+
+    def override_match(
+        self, record_id: str, application_id: str | None
+    ) -> EmailMessage:
+        """Rebind a stored message; never rewrites past application states.
+
+        Binding (or clearing) the record is exact and audited. Applying the
+        message to the newly bound application reuses ingest semantics, which
+        refuse invalid transitions instead of rewriting history. A transition
+        the message previously caused on another application is left standing.
+        """
+
+        record = self.session.get(EmailMessage, record_id)
+        if record is None:
+            raise KeyError(f"Email not found: {record_id}")
+        previous = record.application_id
+        target = (application_id or "").strip() or None
+        if target is not None and self.session.get(Application, target) is None:
+            raise KeyError(f"Application not found: {target}")
+        record.application_id = target
+        self.session.flush()
+        if target is not None:
+            application = self.session.get(Application, target)
+            if application is None:  # re-checked after flush; never assume
+                raise KeyError(f"Application not found: {target}")
+            pseudo = EmailClassification(record.classification or "other", 0.0, "operator override")
+            self._apply(application, pseudo, record.action_deadline)
+        append_audit(
+            self.session,
+            AuditInput(
+                "mail",
+                "email.match_overridden",
+                "email",
+                record.id,
+                {"previous_application_id": previous, "application_id": target},
+            ),
+        )
+        return record
 
     def _transition(self, application: Application, target: ApplicationState) -> None:
         current = ApplicationState(application.state)
