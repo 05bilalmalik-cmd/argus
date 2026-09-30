@@ -89,4 +89,25 @@ def full_sweep(
     results["autopilot"] = scout.run_autopilot(
         _runner_factory(request, settings), max_runs=max_runs
     )
+    try:
+        from app.services.notifications import (
+            NotificationService,
+            queue_deadline_reminders,
+        )
+
+        results["deadline_reminders"] = queue_deadline_reminders(
+            session, NotificationService.from_settings(settings)
+        )
+    except Exception:  # noqa: BLE001 - reminders never break a sweep
+        logger.exception("deadline reminder scan failed during full-sweep")
+        results["deadline_reminders"] = "failed"
+    try:
+        from datetime import datetime, timezone
+
+        from app.scouting.scheduler import record_sweep_health
+
+        results.setdefault("at", datetime.now(timezone.utc).isoformat())
+        record_sweep_health(settings.data_dir, results)
+    except Exception:  # noqa: BLE001 - health persistence must never break a sweep
+        logger.warning("full-sweep health persist failed", exc_info=True)
     return results

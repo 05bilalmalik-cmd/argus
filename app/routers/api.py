@@ -592,7 +592,61 @@ def dashboard(session: SessionDep) -> dict[str, object]:
             }
             for item in snapshot.urgent_actions
         ],
+        "upcoming_opportunity_deadlines": [
+            {
+                "opportunity_id": item.opportunity_id,
+                "employer": item.employer,
+                "role_title": item.role_title,
+                "deadline": item.deadline.isoformat()
+                if hasattr(item.deadline, "isoformat")
+                else str(item.deadline),
+                "programme_group": item.programme_group,
+            }
+            for item in snapshot.upcoming_opportunity_deadlines
+        ],
     }
+
+
+@router.get("/backup")
+def backup_status(request: Request) -> dict[str, object]:
+    from app.services.backup import latest_backup, list_backups
+
+    data_dir = request.app.state.settings.data_dir
+    return {"latest": latest_backup(data_dir), "backups": list_backups(data_dir)}
+
+
+@router.post("/backup", status_code=201)
+def create_backup_endpoint(request: Request, session: SessionDep) -> dict[str, object]:
+    from app.services.backup import BackupError, create_backup
+    from app.version import __version__
+
+    settings = request.app.state.settings
+    try:
+        summary = create_backup(
+            settings.data_dir,
+            database_path=settings.data_dir / "argus.db",
+            documents_dir=settings.documents_dir,
+            secret_key_path=settings.secret_key_path,
+            api_token_path=settings.api_token_path,
+            app_version=__version__,
+        )
+    except BackupError as exc:
+        raise HTTPException(409, f"Backup refused: {exc}") from exc
+    append_audit(
+        session,
+        AuditInput(
+            "user",
+            "backup.created",
+            "backup",
+            str(summary["backup_id"]),
+            {
+                "files": summary["files"],
+                "bytes": summary["bytes"],
+                "db_sha256": summary["db_sha256"],
+            },
+        ),
+    )
+    return summary
 
 
 @router.get("/dashboard/funnel")
@@ -2594,6 +2648,20 @@ def capture_opportunity(
         raise HTTPException(401, "Invalid ARGUS token")
     service = OpportunityService(session)
     candidate = Opportunity(**payload.model_dump())
+    if not getattr(candidate, "programme_group", ""):
+        # Local-only classification: programme_group is not part of the
+        # dedup identity, so filling it here cannot fork identities.
+        # Division is deliberately left as supplied because division IS
+        # part of source_identity_key; inferring it here would split
+        # re-captures of the same URL into duplicate rows.
+        try:
+            from app.scouting.programmes import classify_programme
+
+            candidate.programme_group = classify_programme(
+                candidate.role_title, candidate.employer
+            ).value
+        except Exception:  # noqa: BLE001 - fail closed, keep blank group
+            candidate.programme_group = ""
     try:
         existing = service.find_exact(candidate)
     except ValueError as exc:

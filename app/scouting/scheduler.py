@@ -29,19 +29,85 @@ def trackr_folder(data_dir: Path) -> Path:
     return folder
 
 
+SWEEP_HEALTH_FILENAME = "sweep_health.json"
+_SWEEP_HEALTH_LIMIT_BYTES = 4096
+
+
+def sweep_health_path(data_dir: Path) -> Path:
+    return Path(data_dir) / SWEEP_HEALTH_FILENAME
+
+
+def record_sweep_health(data_dir: Path, results: dict[str, object]) -> None:
+    """Persist a bounded sweep-health snapshot (best-effort, never raises).
+
+    Turns silent in-memory sweep degradation into visible, queryable state
+    surfaced via /healthz. Only scalar summaries are kept; per-opportunity
+    detail stays in the audit log, never here.
+    """
+
+    try:
+        import json
+        import os
+
+        payload: dict[str, object] = {
+            "at": str(results.get("at", ""))[:64],
+            "skipped": bool(results.get("skipped", False)),
+            "reason": str(results.get("reason", "") or "")[:120],
+            "live_scrape": str(results.get("live_scrape", ""))[:64],
+            "parsed": results.get("parsed", 0)
+            if isinstance(results.get("parsed"), int)
+            else 0,
+            "error": str(results.get("error", "") or "")[:240],
+        }
+        ingest = results.get("ingest")
+        if isinstance(ingest, dict):
+            try:
+                payload["ingested"] = int(ingest.get("imported", 0) or 0)
+            except (TypeError, ValueError):
+                payload["ingested"] = 0
+            try:
+                payload["ingest_duplicates"] = int(ingest.get("duplicates", 0) or 0)
+            except (TypeError, ValueError):
+                payload["ingest_duplicates"] = 0
+        raw = json.dumps(payload, sort_keys=True)[:_SWEEP_HEALTH_LIMIT_BYTES]
+        target = sweep_health_path(data_dir)
+        tmp = target.with_suffix(".json.tmp")
+        tmp.write_text(raw, encoding="utf-8")
+        os.replace(tmp, target)
+    except Exception:  # noqa: BLE001 - health persistence must never break a sweep
+        logger.warning("sweep health persist failed", exc_info=True)
+
+
+def read_sweep_health(data_dir: Path) -> dict[str, object]:
+    """Return the last persisted sweep-health snapshot, or {} when unknown."""
+
+    try:
+        import json
+
+        raw = sweep_health_path(data_dir).read_text(encoding="utf-8")
+        payload = json.loads(raw)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:  # noqa: BLE001 - missing/corrupt health reads as unknown
+        return {}
+
+
 def run_sweep(app) -> dict[str, object]:  # noqa: ANN001 - FastAPI app instance
     """One sweep pass: live Trackr scrape -> ingest -> autopilot."""
     with _SWEEP_LOCK:
         settings = app.state.settings
         lock = SweepLock(settings.data_dir / "scout-sweep.lock")
         if not lock.acquire():
-            return {
+            results: dict[str, object] = {
                 "at": datetime.now(timezone.utc).isoformat(),
                 "skipped": True,
                 "reason": "sweep_locked",
             }
+            record_sweep_health(settings.data_dir, results)
+            return results
         try:
-            return _run_sweep_locked(app)
+            results = _run_sweep_locked(app)
+            record_sweep_health(settings.data_dir, results)
+            return results
         finally:
             lock.release()
 
@@ -118,6 +184,18 @@ def _run_sweep_locked(app) -> dict[str, object]:  # noqa: ANN001 - FastAPI app i
 
             results["ingest"] = scout.ingest(scraped)
             results["autopilot"] = scout.run_autopilot(runner_factory, max_runs=10)
+            try:
+                from app.services.notifications import (
+                    NotificationService,
+                    queue_deadline_reminders,
+                )
+
+                results["deadline_reminders"] = queue_deadline_reminders(
+                    session, NotificationService.from_settings(settings)
+                )
+            except Exception:  # noqa: BLE001 - reminders never break a sweep
+                logger.exception("deadline reminder scan failed")
+                results["deadline_reminders"] = "failed"
     except Exception:  # noqa: BLE001
         logger.exception("scout sweep failed")
         results["error"] = "sweep failed - see server log"

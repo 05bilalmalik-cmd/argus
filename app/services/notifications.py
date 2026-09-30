@@ -54,6 +54,7 @@ _APPROVED_REASON_CODES = frozenset(
         "assessment_handoff",
         "authentication_handoff",
         "captcha",
+        "deadline_approaching",
         "destination_identity_unverified",
         "field_verification_failed",
         "human_review_required",
@@ -1480,6 +1481,83 @@ def reconcile_existing_human_applications(
             type(exc).__name__,
             exc,
         )
+
+
+def queue_deadline_reminders(
+    session,  # noqa: ANN001 - SQLAlchemy session
+    notifier: "NotificationService",
+    *,
+    horizon_days: int = 3,
+    now=None,  # noqa: ANN001 - injectable clock for tests
+) -> int:
+    """Notify once per human-blocked application whose action is due soon.
+
+    Scans NEEDS_USER / NEEDS_OA applications with a ``next_action_deadline``
+    within the horizon (overdue included) and queues one
+    ``deadline_approaching`` event each. Repeat suppression comes from the
+    notifier itself: the same (application, state, reason) is never accepted
+    twice, in-memory and in the durable outbox. Never raises; notification
+    is never load-bearing.
+    """
+
+    if getattr(notifier, "enabled", False) is False:
+        return 0
+    try:
+        horizon = int(horizon_days)
+    except (TypeError, ValueError):
+        horizon = 3
+    horizon = max(1, min(horizon, 30))
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from app.models import Application, Opportunity
+
+    now_aware = now or datetime.now(timezone.utc)
+    if now_aware.tzinfo is None:
+        now_aware = now_aware.replace(tzinfo=timezone.utc)
+    cutoff = now_aware + timedelta(days=horizon)
+    try:
+        rows = (
+            session.execute(
+                select(Application, Opportunity)
+                .join(Opportunity, Application.opportunity_id == Opportunity.id)
+                .where(
+                    Application.state.in_(("NEEDS_USER", "NEEDS_OA")),
+                    Application.next_action_deadline.is_not(None),
+                )
+                .order_by(Application.next_action_deadline.asc())
+                .limit(200)
+            )
+        ).all()
+    except Exception as exc:  # noqa: BLE001 - never break the caller
+        LOGGER.warning("deadline reminder scan failed (%s)", type(exc).__name__)
+        return 0
+    sent = 0
+    for application, _opportunity in rows:
+        deadline = application.next_action_deadline
+        try:
+            if deadline is None:
+                continue
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+            if deadline > cutoff:
+                continue
+            event = HumanAttentionEvent.from_application(
+                application, reason="deadline_approaching"
+            )
+        except ValueError:
+            continue
+        try:
+            if notifier.notify(event):
+                sent += 1
+        except Exception as exc:  # noqa: BLE001 - one bad row skips, rest continue
+            LOGGER.warning(
+                "deadline reminder for %s failed (%s)",
+                getattr(application, "id", "?"),
+                type(exc).__name__,
+            )
+    return sent
 
 
 def install_discovery_notification_observer(

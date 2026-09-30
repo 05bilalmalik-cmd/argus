@@ -390,6 +390,17 @@ def _command_audit(args: argparse.Namespace) -> int:
                     )
                     return 2
             verification = verify_audit_chain(session, epoch=selected_epoch)
+            history = None
+            if not all_epochs and requested_epoch is None:
+                # Default path answers "is the current epoch valid" — but a
+                # forked historical epoch would otherwise stay invisible
+                # unless the operator passes --all-epochs. Report the
+                # whole-history result alongside, without changing the
+                # current-epoch verdict or exit code.
+                try:
+                    history = verify_audit_chain(session, epoch=None)
+                except Exception:  # noqa: BLE001 - history advisory, never fatal
+                    history = None
     finally:
         engine.dispose()
     if verification.valid:
@@ -405,9 +416,22 @@ def _command_audit(args: argparse.Namespace) -> int:
         else:
             print(
                 "AUDIT CURRENT EPOCH VALID — "
-                f"epoch {selected_epoch}; {verification.checked_events} events verified; "
-                "historical epochs not included (use --all-epochs)"
+                f"epoch {selected_epoch}; {verification.checked_events} events verified"
             )
+            if history is None:
+                print("HISTORICAL EPOCHS UNKNOWN — whole-history check did not complete")
+            elif history.valid:
+                print(
+                    "HISTORICAL EPOCHS VALID — "
+                    f"{history.checked_events} events verified (use --all-epochs for detail)"
+                )
+            else:
+                print(
+                    "HISTORICAL EPOCHS BROKEN — "
+                    f"event {history.broken_event_id}; "
+                    f"{history.checked_events} prior events verified "
+                    "(use --all-epochs for detail)"
+                )
         return 0
     if not all_epochs:
         print(

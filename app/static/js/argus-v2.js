@@ -12,10 +12,46 @@
     if (!toastRegion) return;
     const node = document.createElement('div');
     node.className = `toast-v2 ${type}`;
+    node.setAttribute('role', type === 'error' ? 'alert' : 'status');
     node.textContent = String(message);
     toastRegion.append(node);
     window.setTimeout(() => node.remove(), 5000);
   }
+
+  function fingerprintFor(element) {
+    if (!element || element === document.body || element === document.documentElement) return null;
+    if (element.id) return `#${CSS.escape(element.id)}`;
+    const name = element.getAttribute && element.getAttribute('name');
+    if (name) return `[name="${name}"]`;
+    return null;
+  }
+
+  function scheduleReload(delay) {
+    // Keep keyboard focus and scroll across the refresh so a success toast
+    // does not drop the operator's place. Storage may be unavailable;
+    // the reload itself never depends on it.
+    try {
+      window.sessionStorage.setItem('argus-reload-focus', JSON.stringify({
+        selector: fingerprintFor(document.activeElement),
+        y: window.scrollY,
+      }));
+    } catch (_) { /* plain reload below */ }
+    window.setTimeout(() => window.location.reload(), delay);
+  }
+
+  (function restoreReloadFocus() {
+    let saved = null;
+    try {
+      saved = JSON.parse(window.sessionStorage.getItem('argus-reload-focus') || 'null');
+      window.sessionStorage.removeItem('argus-reload-focus');
+    } catch (_) { saved = null; }
+    if (!saved) return;
+    if (typeof saved.y === 'number') window.scrollTo(0, saved.y);
+    if (saved.selector) {
+      const target = document.querySelector(saved.selector);
+      if (target && target.focus) target.focus({preventScroll: true});
+    }
+  })();
 
   async function api(url, options = {}) {
     const response = await fetch(url, options);
@@ -31,6 +67,41 @@
       throw error;
     }
     return payload;
+  }
+
+  function shortId(value) {
+    const text = String(value || '');
+    return text.length > 8 ? text.slice(0, 8) : text;
+  }
+
+  function stateWords(value) {
+    return String(value || 'unknown').replace(/_/g, ' ');
+  }
+
+  function summariseResult(result, fallback) {
+    // Name the exact server-confirmed outcome; unknown shapes keep the
+    // generic fallback so no toast ever invents facts.
+    if (!result || typeof result !== 'object') return fallback;
+    if (result.application_id && result.state) {
+      const extra = result.ready === true
+        ? 'ready'
+        : (Array.isArray(result.reason_codes) && result.reason_codes.length
+          ? stateWords(result.reason_codes[0])
+          : stateWords(result.state));
+      return `Application ${extra} · ${shortId(result.application_id)}`;
+    }
+    if (result.canonical_key) return `Answer stored · ${result.canonical_key}`;
+    if (result.sha256 && result.name) {
+      const name = String(result.name);
+      return `Stored ${stateWords(result.kind || 'document')} ${name.length > 48 ? `${name.slice(0, 47)}…` : name}`;
+    }
+    if (result.employer && result.role_title && result.id) {
+      return `Role recorded · ${result.employer} — ${result.role_title}`;
+    }
+    if ('first_name' in result && 'work_authorisation_approved' in result) return 'Profile saved';
+    if (result.backup_id) return `Backup ${result.backup_id} · ${result.files} files`;
+    if (result.message_id) return result.application_id ? `Mail linked · ${shortId(result.application_id)}` : 'Mail unlinked';
+    return fallback;
   }
 
   function setBusy(button, busy, label = 'Working…') {
@@ -157,10 +228,10 @@
               : `Target verification failed at ${verification.failed_check || kind}. The application remains BLOCKED.`
           );
           toast(message, result?.promoted ? 'success' : 'error');
-          if (form.dataset.refresh === 'true') window.setTimeout(() => window.location.reload(), 1200);
+          if (form.dataset.refresh === 'true') scheduleReload(1200);
         } else {
-          toast('Saved locally and passed to the server audit boundary.');
-          if (form.dataset.refresh === 'true') window.setTimeout(() => window.location.reload(), 350);
+          toast(summariseResult(result, 'Saved locally and passed to the server audit boundary.'));
+          if (form.dataset.refresh === 'true') scheduleReload(350);
         }
       } catch (error) {
         toast(error.message, 'error');
@@ -178,9 +249,9 @@
       const button = form.querySelector('[type="submit"]');
       setBusy(button, true, 'Uploading…');
       try {
-        await api(form.action, {method: 'POST', body: new FormData(form)});
-        toast('Verified file stored locally.');
-        if (form.dataset.refresh === 'true') window.setTimeout(() => window.location.reload(), 350);
+        const stored = await api(form.action, {method: 'POST', body: new FormData(form)});
+        toast(summariseResult(stored, 'Verified file stored locally.'));
+        if (form.dataset.refresh === 'true') scheduleReload(350);
       } catch (error) {
         toast(error.message, 'error');
       } finally {
@@ -195,9 +266,9 @@
       if (!window.confirm(confirmation)) return;
       setBusy(button, true);
       try {
-        await api(button.dataset.action, {method: button.dataset.method || 'POST'});
-        toast('Action completed by the server.');
-        window.setTimeout(() => window.location.reload(), 350);
+        const outcome = await api(button.dataset.action, {method: button.dataset.method || 'POST'});
+        toast(summariseResult(outcome, 'Action completed by the server.'));
+        scheduleReload(350);
       } catch (error) {
         toast(error.message, 'error');
       } finally {
@@ -244,7 +315,7 @@
         }),
       });
       toast(result.message);
-      window.setTimeout(() => window.location.reload(), 500);
+      scheduleReload(500);
     } catch (error) {
       toast(error.message, 'error');
     } finally {
@@ -285,7 +356,7 @@
           }),
         });
         toast(`${result.action}: ${result.affected} of ${result.selected} rows changed. Submissions: 0.`);
-        window.setTimeout(() => window.location.reload(), 500);
+        scheduleReload(500);
       } catch (error) {
         toast(error.message, 'error');
       } finally {
@@ -430,7 +501,7 @@
             || 'Link saved. ARGUS will verify it on the next resolution pass before filling anything into it.';
         }
         if (status) status.textContent = '';
-        window.setTimeout(() => window.location.reload(), 600);
+        scheduleReload(600);
       } catch (error) {
         if (status) status.textContent = '';
         if (result) {

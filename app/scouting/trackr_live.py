@@ -28,6 +28,7 @@ from app.scouting.application_window import (
     derive_application_window,
     tracker_owned_host,
 )
+from app.scouting.divisions import infer_division
 from app.scouting.trackr_identity import (
     TrackrIdentityConflictError,
     material_identity_signature,
@@ -67,6 +68,15 @@ class TrackrRow:
     season: str = ""
     source_record_id: str = ""
     invalid_application_url: bool = False
+    # Already-fetched payload evidence, mapped defensively (absent -> neutral).
+    # division is a canonical CV-matching slug (never raw provider text);
+    # eligibility_note is provenance-labelled free text for review, never
+    # parsed into graduation-year bounds.
+    division: str = ""
+    eligibility_note: str = ""
+    cv_required: bool | None = None
+    cover_letter_required: bool | None = None
+    written_answers_required: bool | None = None
 
     def __post_init__(self) -> None:
         self.source_record_id = normalize_trackr_id(self.source_record_id)
@@ -156,6 +166,52 @@ def _location_of(raw: object) -> str:
         if value and value not in values:
             values.append(value)
     return ", ".join(values)
+
+
+def _division_slug(raw: object, role_title: str, employer: str) -> str:
+    """Return a canonical division slug from provider division text.
+
+    The slug vocabulary is shared with title inference, and the role title
+    plus employer are always included, so the result is a superset of the
+    title-only fallback evidence — never worse. Empty/absent provider
+    divisions return "" so the caller falls back exactly as before.
+    """
+
+    parts: list[str] = []
+    if isinstance(raw, list):
+        for entry in raw:
+            if isinstance(entry, str) and entry.strip():
+                parts.append(entry.replace("|", " "))
+    if not parts:
+        return ""
+    return infer_division(f"{role_title} {' '.join(parts)}", employer)
+
+
+def _yes_no_required(raw: object) -> bool | None:
+    """Map provider Yes/No/Optional requirement flags to booleans."""
+
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return raw
+    normalised = re.sub(r"[^a-z]+", "", str(raw).casefold())
+    if normalised == "yes":
+        return True
+    if normalised in {"no", "optional"}:
+        return False
+    return None
+
+
+def _bool_or_none(raw: object) -> bool | None:
+    return raw if isinstance(raw, bool) else None
+
+
+def _eligibility_note(raw: object) -> str:
+    """Return provenance-labelled eligibility text, or "" when absent."""
+
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    return f"Trackr eligibility: {raw.strip()[:2000]}"
 
 
 async def _scrape_via_browser() -> list[dict]:
@@ -248,6 +304,15 @@ def fetch_programmes(season_hint: str = "") -> list[TrackrRow]:
                 invalid_application_url=(
                     raw_application_url not in (None, "")
                     and application_url is None
+                ),
+                division=_division_slug(
+                    item.get("divisions"), name, str(company)
+                ),
+                eligibility_note=_eligibility_note(item.get("eligibility")),
+                cv_required=_bool_or_none(item.get("cv")),
+                cover_letter_required=_yes_no_required(item.get("coverLetter")),
+                written_answers_required=_yes_no_required(
+                    item.get("writtenAnswers")
                 ),
             )
             if row.source_record_id:

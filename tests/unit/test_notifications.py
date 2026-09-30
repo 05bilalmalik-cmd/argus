@@ -2108,3 +2108,62 @@ def test_discovery_disabled_when_notifier_off() -> None:
         scheduler=immediate_scheduler,
     )
     assert notifier.notify_discovery([event]) is False
+
+def _deadline_application(session, *, employer="Deadline Bank", state="NEEDS_USER", due_in_hours=20):
+    from datetime import datetime, timezone
+    opportunity = Opportunity(
+        employer=employer,
+        role_title="Summer Analyst",
+        cycle="2027",
+        url=f"https://example.test/{employer.casefold().replace(' ', '-')}",
+    )
+    session.add(opportunity)
+    session.flush()
+    application = Application(
+        opportunity_id=opportunity.id,
+        state=state,
+        next_action="Complete online assessment",
+        next_action_deadline=datetime.now(timezone.utc) + timedelta(hours=due_in_hours),
+    )
+    session.add(application)
+    session.flush()
+    return application
+
+
+def test_deadline_reminder_fires_once_then_dedups(tmp_path: Path) -> None:
+    module = _notifications()
+    settings = Settings.load({"ARGUS_DATA_DIR": str(tmp_path)})
+    database = Database(settings)
+    database.create_schema()
+    backend = RecordingBackend()
+    notifier = _service(backend)
+    with database.session_scope() as session:
+        _deadline_application(session, due_in_hours=20)
+        assert module.queue_deadline_reminders(session, notifier) == 1
+        assert module.queue_deadline_reminders(session, notifier) == 0
+    assert len(backend.payloads) == 1
+    message = str(backend.payloads[0]["message"])
+    assert "Deadline approaching" in message
+    assert "/needs-you/" in message
+
+
+def test_deadline_reminder_skips_far_and_nonblocking(tmp_path: Path) -> None:
+    module = _notifications()
+    settings = Settings.load({"ARGUS_DATA_DIR": str(tmp_path)})
+    database = Database(settings)
+    database.create_schema()
+    backend = RecordingBackend()
+    notifier = _service(backend)
+    with database.session_scope() as session:
+        _deadline_application(session, employer="Far Bank", due_in_hours=24 * 30)
+        _deadline_application(session, employer="Oa Bank", state="OA_PENDING", due_in_hours=20)
+        _deadline_application(session, employer="Queued Bank", state="QUEUED", due_in_hours=20)
+        assert module.queue_deadline_reminders(session, notifier) == 0
+    assert backend.payloads == []
+
+
+def test_deadline_reminder_disabled_notifier_sends_nothing() -> None:
+    from types import SimpleNamespace
+
+    module = _notifications()
+    assert module.queue_deadline_reminders(None, SimpleNamespace(enabled=False)) == 0

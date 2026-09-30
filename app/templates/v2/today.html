@@ -1,9 +1,11 @@
 {% extends "v2/base.html" %}
 {% macro role_row(row, timing='') -%}
-<a class="dense-row" href="/pipeline/{{ row.id }}">
+{% set cta = 'Choose target' if row.target_choice_required else ('Continue' if row.application_id else 'Evaluate') %}
+<a class="dense-row" href="/pipeline/{{ row.id }}" aria-label="{{ cta }}: {{ row.employer }} — {{ row.role }}">
   <span class="status-dot state-{{ row.window_state|lower|replace('_','-') }}" aria-hidden="true"></span>
   <span class="row-copy"><strong>{{ row.employer }}</strong><small>{{ row.role }}</small></span>
   <span class="row-state">{{ row.window_label }}</span>
+  <span class="row-cta" aria-hidden="true">{{ cta }}</span>
   <time title="{{ (row.closing_date or row.opening_date).isoformat() if (row.closing_date or row.opening_date) else 'No date captured' }}">{{ timing or row.closing_relative or row.opening_relative }}</time>
 </a>
 {%- endmacro %}
@@ -32,7 +34,7 @@
     {% if actionable.count == 0 %}<p class="empty-copy">Nothing requires a human decision. Review the opening calendar next.</p>{% endif %}
   </section>
   <section><div class="section-title"><div><span class="micro-label">OPEN NOW</span><h3>Available roles</h3></div><a href="/pipeline?window_state=OPEN">View all</a></div>
-    {% for row in open_now %}{{ role_row(row, row.closing_relative) }}{% else %}<p class="empty-copy">No role is evidenced as open. Import or refresh source data before acting.</p>{% endfor %}
+    {% for row in open_now %}{{ role_row(row, row.closing_relative) }}{% else %}<p class="empty-copy">No role is evidenced as open. <a href="/opportunities">Import opportunities</a> or refresh source data before acting.</p>{% endfor %}
   </section>
   <section><div class="section-title"><div><span class="micro-label">CLOSES THIS WEEK</span><h3>Urgency</h3></div><a href="/calendar?view=closing">Calendar</a></div>
     {% for row in closing_week %}{{ role_row(row, row.closing_relative) }}{% else %}<p class="empty-copy">No captured closing date falls in the next seven days.</p>{% endfor %}

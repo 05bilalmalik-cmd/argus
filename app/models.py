@@ -260,7 +260,21 @@ class Opportunity(Base):
     def is_open_for_applications(self) -> bool:
         from app.scouting.application_window import ApplicationWindowStatus
 
-        return self.application_window_status == ApplicationWindowStatus.OPEN.value
+        if self.application_window_status != ApplicationWindowStatus.OPEN.value:
+            return False
+        # Date-only stale-deny override (read path, no network, no inference):
+        # a stored OPEN whose dates have since lapsed must not arm
+        # automation. This override can only deny (True -> False), never
+        # newly allow, and it never consults explicit status or URLs.
+        try:
+            today = date.today()
+            if self.deadline is not None and self.deadline < today:
+                return False
+            if self.opening_date is not None and self.opening_date > today:
+                return False
+        except Exception:  # noqa: BLE001 - malformed dates fail closed
+            return False
+        return True
 
 
 class OpportunityArchive(Base):

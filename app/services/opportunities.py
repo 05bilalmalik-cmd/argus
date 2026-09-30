@@ -58,7 +58,7 @@ _HEADER_ALIASES = {
     "employer": {"employer", "company", "firm", "organisation", "organization"},
     "role_title": {"role_title", "role", "title", "programme", "program", "job"},
     "division": {"division", "category", "business_area", "team"},
-    "programme_group": {"programme_group", "program_group", "application_group"},
+    "programme_group": {"programme_group", "program_group", "application_group", "type"},
     "location": {"location", "city", "office"},
     "cycle": {"cycle", "year", "internship_year", "recruitment_cycle"},
     "url": {"url", "link", "application_url", "application_link", "job_url"},

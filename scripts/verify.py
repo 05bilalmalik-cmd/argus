@@ -230,7 +230,11 @@ _CORE_E2E_FILES = frozenset(
     }
 )
 _OPTIONAL_E2E_FILES = frozenset(
-    {"test_default_source_resolution.py", "test_phase17_egress_journeys.py"}
+    {
+        "test_default_source_resolution.py",
+        "test_phase17_egress_journeys.py",
+        "test_preparation_bridge_demo.py",
+    }
 )
 
 

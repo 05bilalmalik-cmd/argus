@@ -25,14 +25,15 @@
 {% if selected %}<aside class="selected-role" aria-label="Selected role"><span class="micro-label">SELECTED ROLE</span><h3>{{ selected.employer }}</h3><p>{{ selected.role }} · {{ selected.location }}</p><dl class="inline-facts"><div><dt>Window</dt><dd>{{ selected.window_label }}</dd></div><div><dt>Application</dt><dd>{{ selected.application_state|replace('_',' ')|title }}</dd></div><div><dt>Next</dt><dd>{{ selected.next_action }}</dd></div></dl><a href="/pipeline/{{ selected.id }}">Open full detail</a></aside>{% endif %}
 
 <section class="pipeline-list" aria-label="Pipeline results">
-  <div class="pipeline-head"><span class="sr-only">Select</span><span>Employer / role</span><span>Programme</span><span>Window</span><span>Application</span><span>Candidate status</span><span>Timing</span></div>
-  {% for row in rows %}<article class="pipeline-row" data-opportunity-id="{{ row.id }}"{% if row.application_id %} data-application-id="{{ row.application_id }}"{% endif %}>
+  <div class="pipeline-head"><span class="sr-only">Select</span><span>Employer / role</span><span>Programme</span><span>Window</span><span>Application</span><span>Candidate status</span><span>Next</span><span>Timing</span></div>
+  {% for row in rows %}{% set cta = 'Choose target' if row.target_choice_required else ('Continue' if row.application_id else 'Evaluate') %}<article class="pipeline-row" data-opportunity-id="{{ row.id }}"{% if row.application_id %} data-application-id="{{ row.application_id }}"{% endif %}>
     <label class="row-select"><span class="sr-only">Select {{ row.employer }} {{ row.role }}</span><input type="checkbox" data-row-select value="{{ row.id }}" data-application-id="{{ row.application_id or '' }}"></label>
     <a class="row-copy" href="/pipeline?role={{ row.id }}"><strong>{{ row.employer }}</strong><small>{{ row.role }} · {{ row.location }}</small></a>
     <span>{{ row.programme|replace('_',' ')|title }}</span>
     <span class="labelled-state"><i class="status-dot state-{{ row.window_state|lower|replace('_','-') }}" aria-hidden="true"></i>{{ row.window_label }}</span>
     <span>{{ row.application_state|replace('_',' ')|title }}</span>
     {{ user_status_editor(row.id, row.user_status, user_status_options, row.automation_exclusion_reason, True) }}
+    <span class="row-cta"><a href="/pipeline/{{ row.id }}">{{ cta }}</a></span>
     <time title="{% if row.closing_date %}Closes {{ row.closing_date.isoformat() }}{% elif row.opening_date %}Opens {{ row.opening_date.isoformat() }}{% else %}No date captured{% endif %}">{% if row.closing_date %}{{ row.closing_relative }}{% elif row.opening_date %}{{ row.opening_relative }}{% else %}—{% endif %}</time>
   </article>{% else %}<p class="empty-copy">No role matches these filters. Clear one filter or import current source evidence in Scout.</p>{% endfor %}
 </section>
