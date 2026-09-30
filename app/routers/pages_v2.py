@@ -868,9 +868,17 @@ def render_today(request: Request):
             ),
             key=lambda item: item.opening_date,
         )[:8]
+        try:
+            from app.scouting.scheduler import read_sweep_health
+
+            _sweep = read_sweep_health(request.app.state.settings.data_dir)
+            sweep_last_at = _sweep.get("at") if isinstance(_sweep, dict) else None
+        except Exception:  # noqa: BLE001 - Today must never fail on stale state
+            sweep_last_at = None
         context = {
             **_base_v2(request, title="Today", active="today", session=session),
             "today_label": today.strftime("%A / %d %B %Y").upper(),
+            "sweep_last_at": sweep_last_at,
             "state_counts": state_counts,
             "closes_this_week": closes,
             "closing_week": closes,

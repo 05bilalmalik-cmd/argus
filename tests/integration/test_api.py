@@ -211,6 +211,7 @@ def test_dashboard_and_page_routes_are_available(tmp_path: Path) -> None:
 
         assert dashboard.status_code == 200
         assert dashboard.json()["total_opportunities"] == 0
+        assert dashboard.json()["sweep_last_at"] is None
         assert page.status_code == 200
         assert "ARGUS" in page.text
         assert "Command Centre" in page.text

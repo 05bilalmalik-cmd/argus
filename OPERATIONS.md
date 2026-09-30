@@ -73,7 +73,19 @@ configured backend is attempted independently.
 
 ## Backups
 
-Stop ARGUS, then copy the complete data directory as one unit. A consistent backup contains:
+Two supported paths. The hot path needs no shutdown; the manual path captures
+everything including evidence files.
+
+**Hot backup (no shutdown):** press **Back up now** on Control, or
+`POST /api/backup`. It snapshots the database through the SQLite online
+backup API plus `secret.key`, `api_token.txt`, and `documents/` into
+`<data-dir>/backups/argus-backup-YYYYMMDDTHHMMSSZ/`, with a `manifest.json`
+(sha256 per file, named exclusions). Caches, logs, traces, screenshots, locks,
+and notification state are excluded. The newest 5 snapshots are retained.
+`GET /api/backup` reports the latest snapshot for freshness checks.
+
+**Manual full copy (includes evidence):** stop ARGUS, then copy the complete
+data directory as one unit. A consistent backup contains:
 
 - `argus.db`
 - `secret.key`
@@ -157,7 +169,7 @@ Evidence is stored under `artifacts/traces` and `artifacts/screenshots` inside t
 
 For `.eml`, export a single message and upload it on **Mail & Assessments**. For IMAP, use a dedicated app password where supported and pass credentials through the environment. The poller inspects the newest 200 message identifiers in the selected folder.
 
-After ingestion, verify the matched employer/application and deadline. An ambiguous employer name or missing reference can cause no match; ARGUS should not be forced to attach the message manually without reviewing the content.
+After ingestion, verify the matched employer/application and deadline. An ambiguous employer name or missing reference causes no match; open **Activity → Mail & Assessments** and use the per-message **Bind** form to attach it to the exact scored candidate after reviewing the content. Binding is confirmed, audited (`email.match_overridden`), and never rewrites a past application state — a transition the message already caused elsewhere is left standing.
 
 ## Live submission runbook
 

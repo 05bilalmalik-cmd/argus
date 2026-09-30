@@ -43,5 +43,5 @@
     {% for row in opens_next %}{{ role_row(row, row.opening_relative) }}{% else %}<p class="empty-copy">No expected opening date is captured yet. Unknown dates remain visible in Calendar.</p>{% endfor %}
   </section>
 </div>
-<p class="truth-note">{{ undated_count }} roles have no date captured. ARGUS never infers a deadline to make the calendar look full.</p>
+<p class="truth-note">{{ undated_count }} roles have no date captured. ARGUS never infers a deadline to make the calendar look full.{% if sweep_last_at %} Discovery data as of {{ sweep_last_at }}.{% else %} No discovery sweep has run yet.{% endif %}</p>
 {% endblock %}

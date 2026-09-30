@@ -572,9 +572,16 @@ def _application(record: Application) -> dict[str, object]:
 
 
 @router.get("/dashboard")
-def dashboard(session: SessionDep) -> dict[str, object]:
+def dashboard(request: Request, session: SessionDep) -> dict[str, object]:
     snapshot = DashboardService(session).snapshot()
+    try:
+        from app.scouting.scheduler import read_sweep_health
+
+        sweep = read_sweep_health(request.app.state.settings.data_dir)
+    except Exception:  # noqa: BLE001 - dashboard must never fail on stale state
+        sweep = {}
     return {
+        "sweep_last_at": sweep.get("at") if isinstance(sweep, dict) else None,
         "total_applications": snapshot.total_applications,
         "total_opportunities": snapshot.total_opportunities,
         "needs_user": snapshot.needs_user,
