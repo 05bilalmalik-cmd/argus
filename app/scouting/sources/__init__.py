@@ -11,6 +11,6 @@ Entry point: :func:`collect_all`.
 """
 from __future__ import annotations
 
-from app.scouting.sources.base import collect_all, dedupe, is_early_careers, normalize_url
+from app.scouting.sources.base import collect_all, collect_all_report, dedupe, is_early_careers, normalize_url
 
-__all__ = ["collect_all", "dedupe", "is_early_careers", "normalize_url"]
+__all__ = ["collect_all", "collect_all_report", "dedupe", "is_early_careers", "normalize_url"]

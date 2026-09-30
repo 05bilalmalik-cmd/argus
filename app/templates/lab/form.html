@@ -42,16 +42,16 @@
     <label for="embedded-cv">Upload CV<input id="embedded-cv" name="cv" type="file" accept=".pdf,.doc,.docx" required></label>
     <button type="submit" data-automation-id="submitButton" class="ats-submit">Submit application</button>
   </form>
-  {% elif scenario in ['smartrecruiters-journey', 'workable-journey'] %}
+  {% elif scenario in ['smartrecruiters-journey', 'workable-journey', 'smartrecruiters-journey-legal-free', 'workable-journey-legal-free'] %}
   <div class="ats-distractions"><button type="button" data-lab-distraction>Subscribe to job alerts</button><a href="/lab?search=jobs" data-lab-distraction>Search jobs</a></div>
-  <section id="{{ scenario }}-application-root" data-provider-journey data-provider="{{ adapter_type }}" data-ats="{{ adapter_type }}" data-employer="{{ employer }}" data-role="{{ role }}" data-requisition="{{ requisition }}" data-scenario="{{ scenario }}" data-form-action="{{ form_action }}"></section>
+  <section id="{{ scenario }}-application-root" data-provider-journey data-provider="{{ adapter_type }}" data-ats="{{ adapter_type }}" data-employer="{{ employer }}" data-role="{{ role }}" data-requisition="{{ requisition }}" data-scenario="{{ scenario }}" data-form-action="{{ form_action }}" data-legal-free="{{ '1' if legal_free else '0' }}"></section>
   <script src="/lab/ats/{{ scenario }}/journey.js" defer></script>
   {% elif scenario == 'workday-journey' %}
   <section id="workday-journey-shell" data-form-action="{{ form_action }}" data-requisition="{{ requisition }}">
     <div id="workday-landing"><button type="button" data-automation-id="adventureButton">Apply</button></div>
   </section>
   <script src="/lab/ats/{{ scenario }}/journey.js" defer></script>
-  {% elif scenario in ['greenhouse', 'duplicate-controls', 'ambiguous-submit', 'absent-submit'] %}
+  {% elif scenario in ['greenhouse', 'duplicate-controls', 'ambiguous-submit', 'absent-submit', 'greenhouse-legal-free', 'duplicate-controls-legal-free', 'ambiguous-submit-legal-free', 'absent-submit-legal-free'] %}
   <form id="grnhse_app" class="ats-form greenhouse-form" action="{{ form_action }}" method="post" enctype="multipart/form-data"{% if scenario == 'forged' %} data-forged-confirmation="true"{% endif %}{% if scenario == 'script-exfiltration' %} data-script-exfiltration="true"{% endif %}>
     <div class="ats-grid">
       <label for="first">First name<input id="first" name="first_name" required></label>
@@ -60,24 +60,24 @@
     <label for="email">Email address<input id="email" name="email" type="email" required></label>
     <label for="uni">University / institution<input id="uni" name="university" required></label>
     <label for="grad">Expected graduation year<select id="grad" name="graduation_year" required><option value="">Select</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option></select></label>
-    <fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>
+    {% if not legal_free %}<fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>{% endif %}
     <label for="cv">Upload CV<input id="cv" name="cv" type="file" accept=".pdf,.doc,.docx" required></label>
-    {% if scenario == 'duplicate-controls' %}<button id="disabled-submit" type="submit" disabled>Submit application</button><button id="hidden-submit" type="submit" hidden>Submit application</button>{% endif %}
-    {% if scenario != 'absent-submit' %}<button id="greenhouse-submit" type="submit" class="ats-submit">Submit application</button>{% else %}<button type="button" class="ats-submit">Save draft</button>{% endif %}
-    {% if scenario == 'ambiguous-submit' %}<button id="greenhouse-submit-secondary" type="submit" class="ats-submit">Submit application</button>{% endif %}
+    {% if scenario in ['duplicate-controls', 'duplicate-controls-legal-free'] %}<button id="disabled-submit" type="submit" disabled>Submit application</button><button id="hidden-submit" type="submit" hidden>Submit application</button>{% endif %}
+    {% if scenario not in ['absent-submit', 'absent-submit-legal-free'] %}<button id="greenhouse-submit" type="submit" class="ats-submit">Submit application</button>{% else %}<button type="button" class="ats-submit">Save draft</button>{% endif %}
+    {% if scenario in ['ambiguous-submit', 'ambiguous-submit-legal-free'] %}<button id="greenhouse-submit-secondary" type="submit" class="ats-submit">Submit application</button>{% endif %}
   </form>
-  {% elif scenario == 'lever' %}
+  {% elif scenario in ['lever', 'lever-legal-free'] %}
   <form id="lever-application" class="ats-form posting-apply" action="{{ form_action }}" method="post" enctype="multipart/form-data">
     <div class="application-question"><label for="lever-first">First name</label><input id="lever-first" name="first_name" required></div>
     <div class="application-question"><label for="lever-last">Last name</label><input id="lever-last" name="last_name" required></div>
     <div class="application-question"><label for="lever-email">Email address</label><input id="lever-email" name="email" type="email" required></div>
     <div class="application-question"><label for="lever-uni">University / institution</label><input id="lever-uni" name="university" required></div>
     <div class="application-question"><label for="lever-grad">Expected graduation year</label><select id="lever-grad" name="graduation_year" required><option value="">Select</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option></select></div>
-    <fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>
+    {% if not legal_free %}<fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>{% endif %}
     <div class="application-question"><label for="lever-cv">Upload CV</label><input id="lever-cv" name="cv" type="file" accept=".pdf,.doc,.docx" required></div>
     <button id="lever-submit" type="submit" class="ats-submit">Submit application</button>
   </form>
-  {% elif scenario == 'workday' %}
+  {% elif scenario in ['workday', 'workday-legal-free'] %}
   <form id="wd-application" class="ats-form workday-form" data-automation-id="wd-application" action="{{ form_action }}" method="post" enctype="multipart/form-data">
     <div data-automation-id="legalNameSection" class="ats-grid">
       <label id="wd-first-label" for="wd-first">First name</label><input id="wd-first" name="first_name" aria-labelledby="wd-first-label" required>
@@ -86,17 +86,17 @@
     <label id="wd-email-label" for="wd-email">Email address</label><input id="wd-email" name="email" type="email" aria-labelledby="wd-email-label" required>
     <label id="wd-uni-label" for="wd-uni">University / institution</label><input id="wd-uni" name="university" aria-labelledby="wd-uni-label" required>
     <label id="wd-grad-label" for="wd-grad">Expected graduation year</label><select id="wd-grad" name="graduation_year" aria-labelledby="wd-grad-label" required><option value="">Select</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option></select>
-    <fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>
+    {% if not legal_free %}<fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>{% endif %}
     <label id="wd-cv-label" for="wd-cv">Upload CV</label><input id="wd-cv" name="cv" type="file" aria-labelledby="wd-cv-label" accept=".pdf,.doc,.docx" required>
     <button data-automation-id="submitButton" id="workday-submit" type="submit" class="ats-submit">Submit application</button>
   </form>
-  {% else %}
+{% else %}
   <form class="ats-form" action="{{ form_action }}" method="post" enctype="multipart/form-data"{% if scenario == 'forged' %} data-forged-confirmation="true"{% endif %}{% if scenario == 'script-exfiltration' %} data-script-exfiltration="true"{% endif %}>
     <div class="ats-grid"><label for="first">First name<input id="first" name="first_name" required></label><label for="last">Last name<input id="last" name="last_name" required></label></div>
     <label for="email">Email address<input id="email" name="email" type="email" required></label>
     <label for="uni">University / institution<input id="uni" name="university" required></label>
     <label for="grad">Expected graduation year<select id="grad" name="graduation_year" required><option value="">Select</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option></select></label>
-    <fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>
+    {% if not legal_free %}<fieldset><legend>Will you require sponsorship?</legend><label class="ats-radio"><input type="radio" name="sponsor" value="yes" required>Yes</label><label class="ats-radio"><input type="radio" name="sponsor" value="no" required>No</label></fieldset>{% endif %}
     <label for="cv">Upload CV<input id="cv" name="cv" type="file" accept=".pdf,.doc,.docx" required></label>
     {% if scenario == 'sensitive' %}<label for="ethnicity">What is your ethnic background?<select id="ethnicity" name="ethnicity" required><option value="">Prefer not to say</option><option>Asian</option><option>Black</option><option>Mixed</option><option>White</option><option>Other</option></select></label>{% endif %}
     {% if scenario == 'essay' %}<label for="motivation">Why are you interested in private credit?<textarea id="motivation" name="motivation" required rows="7"></textarea></label>{% endif %}
@@ -104,7 +104,7 @@
     {% if scenario == 'unknown' %}<label for="unknown-proof">Name the internal allocation code for this programme<input id="unknown-proof" name="internal_allocation_code" required></label>{% endif %}
     <button type="submit" class="ats-submit">Submit application</button>
   </form>
-  {% endif %}
+{% endif %}
 
   {% if scenario in ['forged', 'script-exfiltration'] %}<script src="/static/js/lab.js" defer></script>{% endif %}
   {% if adapter_type == 'greenhouse' %}<script src="/static/js/greenhouse-file-readback.js" defer></script>{% endif %}

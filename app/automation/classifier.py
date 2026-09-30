@@ -7,6 +7,7 @@ from typing import Protocol
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.automation.semantic_classifier import SemanticClassifier, semantic_classifier_enabled
 from app.domain.questions import (
     CanonicalKey,
     FormQuestion,
@@ -29,6 +30,25 @@ def _text(question: FormQuestion) -> str:
     ).casefold()
 
 
+def _primary_label(question: FormQuestion) -> str:
+    """Return the label's primary identity before option enrichment (split on ' — ')."""
+    label = (question.label or "").strip()
+    if " — " in label:
+        return label.split(" — ")[0].strip()
+    return label
+
+
+def _is_source_question(question: FormQuestion) -> bool:
+    """Check if question is a SOURCE/referral question from primary identity."""
+    name = question.name.casefold().strip()
+    primary = _primary_label(question).casefold()
+    if name == "source" or primary == "source":
+        return True
+    # Option/help enrichment is context, not the question's identity.
+    text = " ".join((primary, name, question.placeholder.casefold()))
+    return _contains(text, r"hear about", r"referral source", r"how did you find")
+
+
 def _contains(text: str, *patterns: str) -> bool:
     return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
 
@@ -41,6 +61,12 @@ def _name_matches(question: FormQuestion, *patterns: str) -> bool:
 class DeterministicClassifier:
     def classify(self, question: FormQuestion) -> QuestionMapping:
         text = _text(question)
+
+        # The actual credential control type outranks all label keywords.
+        if question.field_type.casefold() == "password":
+            return self._mapping(
+                CanonicalKey.ACCOUNT_PASSWORD, Sensitivity.SENSITIVE, "Account password matched"
+            )
 
         if question.field_type.casefold() == "captcha" or _contains(
             text, r"captcha", r"verify (?:that )?you are human", r"not a robot"
@@ -86,6 +112,13 @@ class DeterministicClassifier:
                 CanonicalKey.LEGAL_ATTESTATION,
                 Sensitivity.LEGAL,
                 "Legal declaration requires human approval",
+            )
+
+        # Untyped credential wording is also sensitive; legal wording above
+        # retains precedence for ordinary non-password controls.
+        if _contains(text, r"\bpassword\b"):
+            return self._mapping(
+                CanonicalKey.ACCOUNT_PASSWORD, Sensitivity.SENSITIVE, "Account password matched"
             )
 
         if _contains(
@@ -216,6 +249,21 @@ class DeterministicClassifier:
                 "File upload has no verified document purpose",
             )
 
+        # SOURCE before brand matches: a "How did you hear about us?" select
+        # legitimately lists brands (LinkedIn, Indeed, GitHub) among its
+        # options, and the adapter enriches those option texts into the label.
+        # The question identity (hear about / referral source / how did you
+        # find / name=source / label=Source) must outrank an incidental brand
+        # mention. Legal, demographic, sponsorship and work-authorisation checks
+        # stay above, so sensitive questions with brand options still escalate.
+        # A bare LinkedIn profile/URL field carries no SOURCE phrasing and still
+        # falls through to LINKEDIN below.
+        if _is_source_question(question):
+            return self._mapping(
+                CanonicalKey.SOURCE,
+                Sensitivity.STANDARD,
+                "Referral/marketing source matched to stored answer",
+            )
         if _contains(text, r"github", r"git hub"):
             return self._mapping(CanonicalKey.GITHUB, Sensitivity.STANDARD, "GitHub matched")
         if _contains(text, r"linkedin"):
@@ -374,20 +422,6 @@ class DeterministicClassifier:
                 Sensitivity.STANDARD,
                 "Ambiguous start date (education vs employment); requires human mapping",
             )
-        if _contains(text, r"hear about", r"referral source", r"how did you find"):
-            return self._mapping(
-                CanonicalKey.SOURCE,
-                Sensitivity.STANDARD,
-                "Referral/marketing source matched to stored answer",
-            )
-        if question.field_type.casefold() == "password" or _contains(
-            text, r"\bpassword\b"
-        ):
-            # ATS account-creation credentials. Stored encrypted in the
-            # answer bank (sensitive=True) — never auto-generated.
-            return self._mapping(
-                CanonicalKey.ACCOUNT_PASSWORD, Sensitivity.SENSITIVE, "Account password matched"
-            )
         if question.field_type.casefold() == "textarea" and _contains(
             text,
             r"\bwhy\b",
@@ -400,6 +434,12 @@ class DeterministicClassifier:
                 CanonicalKey.MOTIVATION, Sensitivity.STANDARD, "Written answer detected"
             )
 
+        if semantic_classifier_enabled():
+            # Second-chance layer: only fields with no deterministic mapping
+            # (UNKNOWN, confidence 0.0) reach here. Confident mappings above
+            # -- including deliberate UNKNOWN escalations -- are never
+            # overridden.
+            return SemanticClassifier().classify(question)
         return QuestionMapping(
             CanonicalKey.UNKNOWN,
             0.0,

@@ -180,7 +180,7 @@ def test_runner_persists_every_first_party_request_through_a_second_whitelist(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    sentinel_email = "alex.runner.sentinel@example.test"
+    sentinel_email = "demo.candidate@example.test"
     sentinel_location = "221B Runner Sentinel Street"
     raw_email = {
         "host": "email-address-validator.us.greenhouse.io",
@@ -298,8 +298,8 @@ def test_runner_persists_every_first_party_request_through_a_second_whitelist(
 @pytest.mark.parametrize(
     ("change", "sentinel"),
     [
-        ({"path": "/address/validate/alex.runner.path@example.test"}, "alex.runner.path@example.test"),
-        ({"path": "/address/validate/alex%2Erunner%40example%2Etest"}, "alex%2Erunner%40example%2Etest"),
+        ({"path": "/address/validate/demo.candidate@example.test"}, "demo.candidate@example.test"),
+        ({"path": "/address/validate/demo%2Erunner%40example%2Etest"}, "demo%2Erunner%40example%2Etest"),
         ({"host": "unlisted.greenhouse.io"}, "unlisted.greenhouse.io"),
         ({"resource_type": "image"}, "image"),
         ({"candidate_data_kind": "location"}, "location"),
@@ -307,12 +307,12 @@ def test_runner_persists_every_first_party_request_through_a_second_whitelist(
         (
             {
                 "host": "job-boards.cdn.greenhouse.io",
-                "path": "/assets/flags-AlexSample1999.webp",
+                "path": "/assets/flags-DemoCandidate1999.webp",
                 "resource_type": "image",
                 "carries_candidate_data": False,
                 "candidate_data_kind": "",
             },
-            "AlexSample1999",
+            "DemoCandidate1999",
         ),
     ],
     ids=[
@@ -358,12 +358,12 @@ def test_runner_rejects_records_outside_the_measured_endpoint_contract(
     ("unsafe_path", "sentinel"),
     [
         (
-            "/address/validate/alex.audit.path@example.test",
-            "alex.audit.path@example.test",
+            "/address/validate/demo.candidate@example.test",
+            "demo.candidate@example.test",
         ),
         (
-            "/address/validate/alex%2Eaudit%2Epath%40example%2Etest",
-            "alex%2Eaudit%2Epath%40example%2Etest",
+            "/address/validate/demo%2Eaudit%2Epath%40example%2Etest",
+            "demo%2Eaudit%2Epath%40example%2Etest",
         ),
     ],
     ids=["literal-pii-path", "percent-encoded-pii-path"],
@@ -414,12 +414,12 @@ def test_runner_redacts_rejected_service_paths_from_blocked_request_audit(
     ("unsafe_path", "sentinel"),
     [
         (
-            "/address/validate/alex.only.blocked@example.test",
-            "alex.only.blocked@example.test",
+            "/address/validate/demo.candidate@example.test",
+            "demo.candidate@example.test",
         ),
         (
-            "/address/validate/alex%2Eonly%2Eblocked%40example%2Etest",
-            "alex%2Eonly%2Eblocked%40example%2Etest",
+            "/address/validate/demo%2Eonly%2Eblocked%40example%2Etest",
+            "demo%2Eonly%2Eblocked%40example%2Etest",
         ),
     ],
     ids=["literal-pii-path", "percent-encoded-pii-path"],
@@ -644,7 +644,7 @@ def test_application_detail_associates_run_audits_and_discloses_only_safe_record
     tmp_path: Path,
     ui_v2: bool,
 ) -> None:
-    sentinel_email = "alex.ui.sentinel@example.test"
+    sentinel_email = "demo.candidate@example.test"
     sentinel_location = "10 UI Sentinel Square"
     with _client(tmp_path / ("v2" if ui_v2 else "v1"), ui_v2=ui_v2) as client:
         application_id = _seed_application(client, employer="Disclosure Firm", state="NEEDS_USER")
@@ -744,7 +744,7 @@ def test_application_detail_associates_run_audits_and_discloses_only_safe_record
                             },
                             {
                                 "host": "job-boards.cdn.greenhouse.io",
-                                "path": "/assets/flags-AlexSample1999.webp",
+                                "path": "/assets/flags-DemoCandidate1999.webp",
                                 "method": "GET",
                                 "resource_type": "image",
                                 "manifest_vendor": "greenhouse",
@@ -759,7 +759,7 @@ def test_application_detail_associates_run_audits_and_discloses_only_safe_record
                             },
                             {
                                 **safe_email,
-                                "path": "/address/validate/alex%2Eui%40example%2Etest",
+                                "path": "/address/validate/demo%2Eui%40example%2Etest",
                             },
                             {
                                 "host": "unlisted.greenhouse.io",
@@ -838,8 +838,8 @@ def test_application_detail_associates_run_audits_and_discloses_only_safe_record
         "unlisted.greenhouse.io",
         "other-application.greenhouse.io",
         "x-location",
-        "alex%2Eui%40example%2Etest",
-        "AlexSample1999",
+        "demo%2Eui%40example%2Etest",
+        "DemoCandidate1999",
     ):
         assert forbidden not in response.text
 

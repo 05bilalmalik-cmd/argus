@@ -239,6 +239,7 @@ def _seed(
             "form_verified": target_status == TargetKind.APPLICATION_FORM.value,
             "reason_codes": list(reason_codes),
             "evidence": {
+                "synthetic_lab": True,
                 "provider": provider,
                 "employer": employer,
                 "role": f"{employer} Summer Analyst",

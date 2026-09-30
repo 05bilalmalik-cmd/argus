@@ -52,6 +52,7 @@ class CandidateProfile(Base):
     graduation_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     current_study_year: Mapped[str] = mapped_column(String(80), default="")
     preferred_locations_json: Mapped[str] = mapped_column(Text, default="[]")
+    admissible_graduation_years_json: Mapped[str] = mapped_column(Text, default="[]")
     work_authorisation_ciphertext: Mapped[str] = mapped_column(Text, default="")
     sponsorship_required_ciphertext: Mapped[str] = mapped_column(Text, default="")
     work_authorisation_approved: Mapped[bool] = mapped_column(Boolean, default=False)

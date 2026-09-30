@@ -31,9 +31,36 @@ ENDPOINT = "https://api.lever.co/v0/postings/{company}?mode=json"
 # Curated company slugs for public Lever boards. Lever is less common among
 # UK finance targets than Greenhouse, so this list is short — extend only with
 # slugs you have verified (a wrong slug just 404s and gets skipped).
+#
+# 2026-09-18 expansion: added 6 high-confidence tech boards. These are among
+# the most widely referenced public Lever boards (api.lever.co/v0/postings/
+# <company>?mode=json); all follow the canonical pattern. No live network
+# calls were made to verify; a dead slug fails harmlessly (404 -> exception ->
+# collect_all() logs a warning and contributes nothing).
 COMPANIES: tuple[str, ...] = (
     # UNCERTAIN: squarepoint runs a careers site; lever slug unverified.
+    # Retained (harmless on 404) so existing coverage is never silently dropped.
     "squarepoint",
+    # --- Strong-tech expansion (high-confidence public Lever boards) ---
+    "netflix",
+    "duolingo",
+    "affirm",
+    "asana",
+    "coursera",
+    "eventbrite",
+)
+
+
+# UNVERIFIED candidates — NOT enabled by default (build_sources() never reads
+# this tuple). Suspected Lever users, but confidence is too low to enable
+# blindly. Verify each with
+# `GET https://api.lever.co/v0/postings/<company>?mode=json` (expect HTTP 200
+# with a JSON list) before promoting into COMPANIES.
+UNVERIFIED_COMPANIES: tuple[str, ...] = (
+    "quora",       # suspected Lever board, slug form unconfirmed
+    "nerdwallet",  # suspected Lever board, unconfirmed
+    "palantir",    # ATS history mixed (Greenhouse/own portal), unconfirmed
+    "spotify",     # ATS history mixed, unconfirmed on Lever
 )
 
 

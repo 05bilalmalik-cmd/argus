@@ -172,6 +172,77 @@ def dedupe(opportunities: Iterable[ScrapedOpportunity]) -> list[ScrapedOpportuni
 
 Source = tuple[str, Callable[[], list["ScrapedOpportunity"]]]
 
+# Rows must carry the attributes the merge/filter below read; anything else
+# is a malformed source row, rejected per source (never a sweep-wide crash).
+_REQUIRED_ROW_ATTRS = ("employer", "role_title", "source_url", "location", "division")
+
+
+def _safe_source_error(exc: BaseException) -> str:
+    """Fixed whitelist: exception type + known category, never message text.
+
+    Transport messages routinely echo request URLs and credentials, so no
+    arbitrary exception message is ever retained — only the type name plus a
+    fixed category. HTTP status codes are preserved as useful diagnostics.
+    """
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code is not None:
+        try:
+            code = int(status_code)
+        except (TypeError, ValueError):
+            code = None
+        if code is not None:
+            return f"{type(exc).__name__}: HTTP {code}"
+    kind = type(exc).__name__
+    if "Timeout" in kind or "TimedOut" in kind:
+        return f"{kind}: timed out"
+    if "Connect" in kind:
+        return f"{kind}: connection failed"
+    if "SSL" in kind or "Certificate" in kind:
+        return f"{kind}: TLS failed"
+    return kind
+
+
+class PartialFetchResult(list):
+    """List subclass carrying partial page-failure metadata for aggregators.
+
+    Allows the collector to distinguish between:
+    - healthy empty (all pages succeeded, zero rows)
+    - partial success (some pages failed, some rows collected)
+    - total failure (all pages failed, metadata carried without raising)
+    """
+
+    __slots__ = ("failed_pages", "total_pages", "failed_urls", "collector_error")
+
+    def __init__(
+        self,
+        rows: list["ScrapedOpportunity"],
+        *,
+        failed_pages: int,
+        total_pages: int,
+        failed_urls: tuple[str, ...] = (),
+        collector_error: str | None = None,
+    ):
+        super().__init__(rows)
+        self.failed_pages = failed_pages
+        self.total_pages = total_pages
+        self.failed_urls = failed_urls
+        self.collector_error = collector_error
+
+
+def _malformed_row_reason(rows: list) -> str | None:
+    # Every attribute read by source_identity_key (dedupe) and the
+    # early-careers filter must already be text: a non-string value would
+    # crash the global merge and discard every earlier good source.
+    for row in rows:
+        for attr in _REQUIRED_ROW_ATTRS:
+            if not isinstance(getattr(row, attr, None), str):
+                return (
+                    f"malformed row: {type(row).__name__} "
+                    f"has a non-text {attr}"
+                )
+    return None
+
 
 def build_sources(settings: Mapping | None = None) -> list[Source]:
     """Registered source callables for one sweep (watchlist-driven)."""
@@ -198,6 +269,264 @@ def build_sources(settings: Mapping | None = None) -> list[Source]:
     return sources
 
 
+def collect_all_report(
+    settings: Mapping | None = None,
+    *,
+    sources: Iterable[Source] | None = None,
+    deadline_seconds: float | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> tuple[list[ScrapedOpportunity], dict[str, object]]:
+    """Run every registered source and report truthful per-source outcomes.
+
+    Returns ``(items, report)`` where ``items`` is exactly what
+    :func:`collect_all` would return (deduped + early-careers filtered) and
+    ``report`` carries ``registered/attempted/succeeded/failed`` counters plus
+    ``per_source`` raw row counts and ``errors`` keyed by source name.
+
+    A failing source contributes nothing and never sinks the sweep; an
+    all-failed sweep returns ``items == []`` with ``failed == attempted`` so
+    callers must not mistake it for an empty-success board. A source whose
+    rows fail materialization or validation is rejected in isolation with a
+    per-source error — earlier good sources are never discarded by the later
+    global dedupe. Duplicate source names are explicitly reported in
+    ``duplicate_sources`` (counts merged under the shared name so counters
+    stay reconcilable). Error text carries the exception type plus a safe
+    category only — never a raw URL that could embed query secrets.
+
+    ``deadline_seconds`` bounds the harvest wall-clock cooperatively: it is
+    checked between sources only, so one active source making several HTTP
+    calls can overrun it (each call still honors the shared ``HTTP_TIMEOUT``).
+    There is deliberately no threadpool — inflight work is always exactly the
+    one request currently executing, which is also why the bound cannot
+    preempt a running source. ``is_cancelled`` likewise stops the sweep
+    between sources. Truncated runs list the unattempted names in ``skipped``
+    with ``truncated`` set to ``"time_budget"`` or ``"cancelled"`` — callers
+    must treat those as explicitly partial, never empty-success.
+    ``deadline_seconds=None`` is the explicit backward-compatible unlimited
+    mode; any other value must be finite and non-negative, otherwise nothing
+    is fetched and the report carries a ``collector_error``. A raising
+    cancellation callback fails closed: fetching stops at once and the error
+    is recorded. Counters distinguish ``registered`` (known sources) from
+    genuinely ``attempted`` (``succeeded + failed``); ``registered`` always
+    equals ``attempted + len(skipped)``.
+    """
+    import math
+    import time
+
+    try:
+        specs = list(build_sources(settings) if sources is None else sources)
+    except Exception as exc:  # noqa: BLE001 - construction failure is itself the report
+        logger.warning("source registry failed: %s", type(exc).__name__)
+        return [], {
+            "registered": 0,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "per_source": {},
+            "errors": {},
+            "total_raw": 0,
+            "total": 0,
+            "skipped": [],
+            "truncated": None,
+            "duplicate_sources": [],
+            "collector_error": _safe_source_error(exc),
+        }
+
+    if deadline_seconds is not None:
+        try:
+            budget = float(deadline_seconds)
+        except (TypeError, ValueError):
+            budget = float("nan")
+        if not math.isfinite(budget) or budget < 0:
+            # Build skipped list with duplicate detection for invalid/negative budget
+            seen_names: set[str] = set()
+            duplicate_sources: list[str] = []
+            skipped: list[str] = []
+            for spec in specs:
+                if isinstance(spec, tuple) and len(spec) == 2:
+                    name = spec[0]
+                else:
+                    name = "<malformed>"
+                if name in seen_names and name not in duplicate_sources:
+                    duplicate_sources.append(name)
+                seen_names.add(name)
+                skipped.append(name)
+            return [], {
+                "registered": len(specs),
+                "attempted": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "per_source": {},
+                "errors": {"duplicate_sources": "duplicate source registrations: " + ", ".join(sorted(duplicate_sources))} if duplicate_sources else {},
+                "total_raw": 0,
+                "total": 0,
+                "skipped": skipped,
+                "truncated": "time_budget",
+                "duplicate_sources": duplicate_sources,
+                "collector_error": (
+                    "invalid collection budget: "
+                    f"{type(deadline_seconds).__name__}"
+                ),
+            }
+        deadline = time.monotonic() + budget
+    else:
+        deadline = None
+    seen_names: set[str] = set()
+    duplicate_sources: list[str] = []
+    partial_sources: list[str] = []
+    per_source: dict[str, int] = {}
+    errors: dict[str, str] = {}
+    skipped: list[str] = []
+    truncated: str | None = None
+    succeeded = 0
+    failed = 0
+    malformed_count = 0
+    collected: list[ScrapedOpportunity] = []
+    for index, spec in enumerate(specs):
+        # Validate spec structure before unpacking to catch malformed registrations
+        if not isinstance(spec, tuple) or len(spec) != 2 or not callable(spec[1]):
+            # Sanitize log: don't log the callable or full spec, just the index and type
+            spec_type = type(spec).__name__
+            logger.warning("source registration malformed at index %d: %s (expected 2-tuple with callable)", index, spec_type)
+            # Malformed spec is not attempted (callable never invoked), so don't increment failed
+            # Use a synthetic name for the malformed entry
+            malformed_count += 1
+            malformed_name = f"<malformed:{index}>"
+            per_source[malformed_name] = 0
+            errors[malformed_name] = "malformed source registration: expected (name, fetch) tuple with callable"
+            continue
+        name, fetch = spec
+        if is_cancelled is not None:
+            try:
+                cancelled = bool(is_cancelled())
+            except Exception as exc:  # noqa: BLE001 - fail closed on a broken stop guard
+                logger.warning(
+                    "cancellation callback failed (%s); stopping harvest",
+                    type(exc).__name__,
+                )
+                errors["cancellation_callback"] = (
+                    f"{type(exc).__name__}: cancellation check failed"
+                )
+                truncated = "cancelled"
+                # Build skipped list with duplicate detection for remaining specs
+                for i, s in enumerate(specs[index:], start=index):
+                    if isinstance(s, tuple) and len(s) == 2:
+                        skip_name = s[0]
+                    else:
+                        skip_name = f"<malformed:{i}>"
+                    if skip_name in seen_names and skip_name not in duplicate_sources:
+                        duplicate_sources.append(skip_name)
+                    seen_names.add(skip_name)
+                    skipped.append(skip_name)
+                break
+            if cancelled:
+                truncated = "cancelled"
+                # Build skipped list with duplicate detection for remaining specs
+                for i, s in enumerate(specs[index:], start=index):
+                    if isinstance(s, tuple) and len(s) == 2:
+                        skip_name = s[0]
+                    else:
+                        skip_name = f"<malformed:{i}>"
+                    if skip_name in seen_names and skip_name not in duplicate_sources:
+                        duplicate_sources.append(skip_name)
+                    seen_names.add(skip_name)
+                    skipped.append(skip_name)
+                break
+        if deadline is not None and time.monotonic() >= deadline:
+            truncated = "time_budget"
+            # Build skipped list with duplicate detection for remaining specs
+            for i, s in enumerate(specs[index:], start=index):
+                if isinstance(s, tuple) and len(s) == 2:
+                    skip_name = s[0]
+                else:
+                    skip_name = f"<malformed:{i}>"
+                if skip_name in seen_names and skip_name not in duplicate_sources:
+                    duplicate_sources.append(skip_name)
+                seen_names.add(skip_name)
+                skipped.append(skip_name)
+            break
+        if name in seen_names and name not in duplicate_sources:
+            duplicate_sources.append(name)
+        seen_names.add(name)
+        try:
+            raw_result = fetch()
+            if isinstance(raw_result, PartialFetchResult):
+                rows = list(raw_result)
+                if raw_result.collector_error:
+                    # All pages failed: count as a failed source
+                    failed += 1
+                    per_source[name] = per_source.get(name, 0)
+                    errors[name] = raw_result.collector_error
+                    continue
+                else:
+                    # Partial page failure: some succeeded, some failed
+                    partial_sources.append(name)
+                    partial_msg = (
+                        f"partial: {raw_result.failed_pages} of {raw_result.total_pages} pages failed"
+                    )
+                    errors[name] = partial_msg
+            else:
+                rows = list(raw_result or [])
+        except Exception as exc:  # noqa: BLE001 - isolation per source is the point
+            logger.warning("source %s failed, skipping: %s", name, type(exc).__name__)
+            failed += 1
+            per_source[name] = per_source.get(name, 0)
+            errors.setdefault(name, _safe_source_error(exc))
+            continue
+        reason = _malformed_row_reason(rows)
+        if reason is not None:
+            logger.warning("source %s rejected: %s", name, reason)
+            failed += 1
+            per_source[name] = per_source.get(name, 0)
+            errors.setdefault(name, reason)
+            continue
+        per_source[name] = per_source.get(name, 0) + len(rows)
+        succeeded += 1
+        collected.extend(rows)
+    if duplicate_sources:
+        errors["duplicate_sources"] = (
+            "duplicate source registrations: " + ", ".join(sorted(duplicate_sources))
+        )
+    try:
+        merged = dedupe(collected)
+        items = [opp for opp in merged if is_early_careers(opp.role_title)]
+    except Exception as exc:  # noqa: BLE001 - global merge failure is explicit, not silent
+        logger.warning("source merge failed: %s", type(exc).__name__)
+        attempted = succeeded + failed
+        return [], {
+            "registered": attempted + len(skipped) + malformed_count,
+            "attempted": attempted,
+            "succeeded": succeeded,
+            "failed": failed,
+            "per_source": per_source,
+            "errors": {**errors, "collector": _safe_source_error(exc)},
+            "total_raw": len(collected),
+            "total": 0,
+            "skipped": skipped,
+            "truncated": truncated,
+            "duplicate_sources": duplicate_sources,
+            "partial_sources": partial_sources,
+            "collector_error": _safe_source_error(exc),
+        }
+    attempted = succeeded + failed
+    report: dict[str, object] = {
+        "registered": attempted + len(skipped) + malformed_count,
+        "attempted": attempted,
+        "succeeded": succeeded,
+        "failed": failed,
+        "per_source": per_source,
+        "errors": errors,
+        "total_raw": len(collected),
+        "total": len(items),
+        "skipped": skipped,
+        "truncated": truncated,
+        "duplicate_sources": duplicate_sources,
+        "partial_sources": partial_sources,
+        "collector_error": None,
+    }
+    return items, report
+
+
 def collect_all(
     settings: Mapping | None = None,
     *,
@@ -209,15 +538,5 @@ def collect_all(
     never sinks the sweep. Non-early-careers rows are dropped at the end so the
     pipeline only ever sees relevant programmes.
     """
-    if sources is None:
-        sources = build_sources(settings)
-    collected: list[ScrapedOpportunity] = []
-    for name, fetch in sources:
-        try:
-            rows = fetch() or []
-        except Exception as exc:  # noqa: BLE001 - isolation per source is the point
-            logger.warning("source %s failed, skipping: %s", name, exc)
-            continue
-        collected.extend(rows)
-    merged = dedupe(collected)
-    return [opp for opp in merged if is_early_careers(opp.role_title)]
+    items, _ = collect_all_report(settings, sources=sources)
+    return items

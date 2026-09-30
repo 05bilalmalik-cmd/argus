@@ -2,15 +2,21 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
 
+from app.automation.host_policy import origin_for_url
 from app.automation.runner import SubmissionBlocked, assert_submission_allowed
+from app.automation.targets import TargetResolution
 from app.config import Settings
 from app.db import Database
 from app.domain.states import ApplicationState, InvalidTransition, validate_transition
+from app.domain.targets import TargetKind
+from app.models import Opportunity
 from app.security.audit import AuditInput, append_audit, verify_audit_chain
+from app.services.target_resolution import TargetResolutionService
 from tests.e2e.conftest import LiveServer, persist_verified_lab_target
 from tests.document_helpers import cv_docx_bytes
 
@@ -22,7 +28,7 @@ def configure_candidate(base_url: str) -> None:
             "first_name": "Demo",
             "last_name": "Candidate",
             "email": "demo@example.test",
-            "university": "Example University",
+            "university": "Lancaster University",
             "degree": "BSc Finance",
             "graduation_year": 2028,
             "work_authorisation": "Approved local laboratory wording",
@@ -73,6 +79,88 @@ def prepare(server: LiveServer, scenario: str) -> str:
     )
     evaluated = httpx.post(
         f"{base_url}/api/opportunities/{opportunity.json()['id']}/evaluate", timeout=10
+    )
+    evaluated.raise_for_status()
+    application_id = evaluated.json()["application_id"]
+    httpx.post(f"{base_url}/api/applications/{application_id}/queue", timeout=10).raise_for_status()
+    package = httpx.post(
+        f"{base_url}/api/applications/{application_id}/prepare", timeout=10
+    )
+    package.raise_for_status()
+    assert package.json()["ready"] is True
+    return application_id
+
+
+def prepare_legal_free(server: LiveServer) -> str:
+    """Narrowly test-scoped legal-free success fixture for duplicate-submit.
+
+    The full lab forms carry a required sponsorship radio, which the runner
+    intentionally never auto-fills (legal declaration without jurisdiction
+    scope -> NEEDS_USER/approved_legal_answer_missing).  The embedded
+    ``?frame=1`` lab form has no legal-gated fields, so the guarded flow can
+    reach CONFIRMATION_VERIFIED without weakening any guard.  Form identity
+    is derived from the URL path (query stripped) so the persisted envelope
+    stays bound to the verified target form; the shared helper derives it
+    from the raw URL tail and cannot be used for query-suffixed targets.
+    """
+
+    base_url = server.base_url
+    target_url = f"{base_url}/lab/ats/standard?frame=1"
+    opportunity = httpx.post(
+        f"{base_url}/api/opportunities",
+        json={
+            "employer": "ARGUS Test Capital",
+            "role_title": "Summer Analyst",
+            "division": "Investment Banking",
+            "programme_group": "summer",
+            "location": "London",
+            "cycle": "2027",
+            "url": target_url,
+            "source": "adversarial_e2e",
+            "ats_type": "greenhouse",
+            "sponsorship_supported": True,
+            "cv_required": True,
+        },
+        timeout=10,
+    )
+    opportunity.raise_for_status()
+    opportunity_id = opportunity.json()["id"]
+    settings = Settings.load(
+        {
+            "ARGUS_DATA_DIR": str(server.data_dir),
+            "ARGUS_API_TOKEN": "e2e-token",
+        }
+    )
+    database = Database(settings)
+    try:
+        with database.session_scope() as session:
+            stored = session.get(Opportunity, opportunity_id)
+            if stored is None:
+                raise KeyError(opportunity_id)
+            TargetResolutionService(session).record(
+                opportunity_id,
+                TargetResolution(
+                    source_url=stored.navigation_url,
+                    final_url=target_url,
+                    kind=TargetKind.APPLICATION_ENTRY,
+                    provider="greenhouse",
+                    identity_verified=True,
+                    reason_codes=("synthetic_loopback_lab_fixture", "legal_free_frame_fixture"),
+                    evidence={
+                        "synthetic_lab": True,
+                        "provider": "greenhouse",
+                        "application_origin": origin_for_url(target_url),
+                        "employer": "ARGUS Test Capital",
+                        "role": "Summer Analyst",
+                        "requisition": urlsplit(target_url).path,
+                        "form_identity": urlsplit(target_url).path.rstrip("/").rsplit("/", 1)[-1],
+                    },
+                ),
+            )
+    finally:
+        database.engine.dispose()
+    evaluated = httpx.post(
+        f"{base_url}/api/opportunities/{opportunity_id}/evaluate", timeout=10
     )
     evaluated.raise_for_status()
     application_id = evaluated.json()["application_id"]
@@ -159,7 +247,13 @@ def test_malicious_document_filename_cannot_escape_document_vault(live_server) -
 
 def test_duplicate_submit_is_refused_without_second_post(live_server) -> None:
     configure_candidate(live_server.base_url)
-    application_id = prepare(live_server, "standard")
+    # Narrowly scoped legal-free fixture: the full lab forms carry a required
+    # sponsorship declaration that the runner intentionally never auto-fills
+    # (NEEDS_USER/approved_legal_answer_missing).  The embedded frame form has
+    # no legal-gated fields, so this duplicate-guard test can exercise a real
+    # guarded submit without weakening that boundary.  All legal/declaration
+    # negatives below stay on the full forms.
+    application_id = prepare_legal_free(live_server)
 
     first = run_submit(live_server.base_url, application_id)
     second = run_submit(live_server.base_url, application_id)

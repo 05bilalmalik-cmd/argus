@@ -17,7 +17,10 @@ def field(label: str, field_type: str = "text", *, required: bool = True, option
     )
 
 
-def test_fill_plan_resolves_approved_sponsorship_without_exposing_answer() -> None:
+def test_fill_plan_escalates_sponsorship_despite_approved_profile() -> None:
+    # Legal/eligibility declarations fail closed: the stored answer carries
+    # no jurisdiction scope, so the declaration is left blank for the human
+    # through the standard missing-answer escalation (NEEDS_USER downstream).
     plan = build_fill_plan(
         [field("Will you require sponsorship?", "radio", options=("Yes", "No"))],
         DeterministicClassifier(),
@@ -27,10 +30,12 @@ def test_fill_plan_resolves_approved_sponsorship_without_exposing_answer() -> No
         adapter_name="greenhouse",
     )
 
-    assert plan.risk.level == 0
-    assert plan.actions[0].value == "No"
-    assert plan.actions[0].source == "approved_profile"
-    assert redact_answer_preview(plan.actions[0]) == "[REDACTED]"
+    assert plan.risk.level == 3
+    assert "approved_legal_answer_missing" in plan.risk.blocking_codes
+    assert plan.actions[0].value is None
+    assert plan.actions[0].source == "missing"
+    assert plan.actions[0].status == "blocked"
+    assert redact_answer_preview(plan.actions[0]) == ""
 
 
 def test_fill_plan_pauses_for_assessment_and_captcha() -> None:
@@ -72,7 +77,7 @@ def test_generic_unknown_ats_requires_review_even_when_fields_are_known() -> Non
     plan = build_fill_plan(
         [field("First name")],
         DeterministicClassifier(),
-        {"identity.first_name": "Alex"},
+        {"identity.first_name": "Demo"},
         answer_lookup=lambda key, label: None,
         document_lookup=lambda key: None,
         adapter_name="generic",

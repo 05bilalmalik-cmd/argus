@@ -26,7 +26,7 @@ def test_post_click_failure_marks_unknown_and_blocks_retry(
     # ---- 1. drive the real flow against the live server's lab ----------
     base_url = live_server.base_url
     _configure_candidate(base_url)
-    application_id = _prepare(live_server, "greenhouse", "greenhouse")
+    application_id = _prepare(live_server, "greenhouse-legal-free", "greenhouse")
 
     # ---- 2. run the submit pass IN-PROCESS with an injected commit failure
     settings = Settings.load(

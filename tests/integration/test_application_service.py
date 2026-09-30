@@ -29,7 +29,7 @@ def seed_profile(session, crypto):
             last_name="Candidate",
             email="demo@example.test",
             graduation_year=2029,
-            university="Example University",
+            university="Lancaster University",
             work_authorisation="Approved UK wording",
             requires_sponsorship=False,
             work_authorisation_approved=True,

@@ -52,7 +52,7 @@ def test_unknown_data_bearing_to_unapproved_host_must_block():
         egress_allowed(
             "https://collector.attacker.example/collect",
             "POST",
-            "email=alex@example.test",
+            "email=demo.candidate@example.test",
             approved_hosts=frozenset({"portal.example.com"}),
         )
         is False
@@ -79,7 +79,7 @@ def test_candidate_data_in_get_query_or_headers_is_data_bearing():
 
     assert (
         classify_request(
-            "https://cdn.example.com/app.js?email=alex%40example.test",
+            "https://cdn.example.com/app.js?email=demo%40example.test",
             "GET",
             "",
         )
@@ -198,7 +198,7 @@ def test_recursive_percent_decoding_and_encoded_json_are_candidate_data():
 
     from app.automation.host_policy import classify_request
 
-    triple_encoded_email = "alex%2540example%252Etest"
+    triple_encoded_email = "demo%2540example%252Etest"
     assert (
         classify_request(
             f"https://cdn.example.com/app.js?payload={triple_encoded_email}",
@@ -208,7 +208,7 @@ def test_recursive_percent_decoding_and_encoded_json_are_candidate_data():
         == "data_bearing"
     )
     encoded_json = base64.urlsafe_b64encode(
-        b'{"email":"alex@example.test","phone":"+447700900123"}'
+        b'{"email":"demo.candidate@example.test","phone":"+447700900123"}'
     ).decode()
     assert (
         classify_request(
@@ -262,7 +262,7 @@ def test_nested_base64_layers_in_query_and_headers_are_candidate_data():
 
     from app.automation.host_policy import classify_request
 
-    encoded = b'{"candidate":{"email":"alex@example.test"}}'
+    encoded = b'{"candidate":{"email":"demo.candidate@example.test"}}'
     for _ in range(3):
         encoded = base64.urlsafe_b64encode(encoded)
     token = quote(encoded.decode("ascii"), safe="")
@@ -344,7 +344,7 @@ def test_approved_origin_pii_get_and_head_are_fatal_without_explicit_data_get_ap
 
     encoded = quote(
         base64.urlsafe_b64encode(
-            b'{"candidate":{"email":"alex@example.test","phone":"+447700900123"}}'
+            b'{"candidate":{"email":"demo.candidate@example.test","phone":"+447700900123"}}'
         ).decode("ascii"),
         safe="",
     )
@@ -376,7 +376,7 @@ def test_approved_origin_passive_resource_and_mutating_form_action_remain_allowe
     submit = classify_egress(
         "https://portal.example.com/apply/submit",
         "POST",
-        "first_name=Alex",
+        "first_name=Demo",
         approved_hosts={"portal.example.com"},
     )
     assert submit.classification == "data_bearing"

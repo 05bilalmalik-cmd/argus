@@ -229,17 +229,42 @@ def parse_wikijob_html(html: str | None, base_url: str = WIKIJOB_URLS[0]) -> lis
     return parse_listing_html(html, source_label="wikijob", base_url=base_url)
 
 
-def _fetch_pages(urls: tuple[str, ...], parser) -> list[ScrapedOpportunity]:
-    from app.scouting.sources.base import dedupe
+def _fetch_pages(urls: tuple[str, ...], parser):
+    from app.scouting.sources.base import dedupe, PartialFetchResult, _safe_source_error
 
     collected: list[ScrapedOpportunity] = []
+    failed_pages = 0
+    failed_urls: list[str] = []
+    last_error_type: str | None = None
     for url in urls:
         try:
             html = http_get(url)
         except Exception as exc:  # noqa: BLE001 - one dead page must not kill the site
-            logger.warning("aggregator page %s failed: %s", url, exc)
+            logger.warning("aggregator page failed: %s", _safe_source_error(exc))
+            failed_pages += 1
+            failed_urls.append(url)
+            last_error_type = type(exc).__name__
             continue
         collected.extend(parser(html, base_url=url))
+    total_pages = len(urls)
+    if failed_pages == total_pages:
+        # All pages failed: return empty list with failure metadata so collector
+        # counts this source as failed; direct callers still receive [].
+        return PartialFetchResult(
+            [],
+            failed_pages=failed_pages,
+            total_pages=total_pages,
+            failed_urls=tuple(failed_urls),
+            collector_error=last_error_type or "RuntimeError",
+        )
+    if failed_pages > 0:
+        # Partial failure: return metadata-wrapped result
+        return PartialFetchResult(
+            dedupe(collected),
+            failed_pages=failed_pages,
+            total_pages=total_pages,
+            failed_urls=tuple(failed_urls),
+        )
     return dedupe(collected)
 
 

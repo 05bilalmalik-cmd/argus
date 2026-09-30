@@ -153,6 +153,52 @@ class SubmissionIntentService:
                 f"Submission intent {intent.id} disappeared during its transition"
             ) from exc
 
+    def _cas_status_pending(
+        self,
+        intent: SubmissionIntent,
+        *,
+        target_status: str,
+        operation: str,
+        resolved: bool = False,
+    ) -> None:
+        """Compare-and-set one intent row in the caller's transaction.
+
+        Unlike :meth:`_cas_status` this never commits or rolls back. The
+        caller owns the commit so application confirmation and intent
+        confirmation can persist atomically. On a CAS loss the intent row
+        is refreshed (no rollback) to expose the concurrent winner, then
+        :class:`IntentStateError` is raised and the caller must roll back
+        its transaction before reconciling to uncertainty.
+        """
+
+        expected_status = str(intent.status)
+        if expected_status not in _PREPARED_STATUSES | {CLICKED}:
+            self._require_status(intent, frozenset(_PREPARED_STATUSES | {CLICKED}), operation)
+        values: dict[str, object] = {"status": target_status}
+        if resolved:
+            values["resolved_at"] = datetime.now(timezone.utc)
+        with self.session.no_autoflush:
+            result = self.session.execute(
+                update(SubmissionIntent)
+                .where(
+                    SubmissionIntent.id == intent.id,
+                    SubmissionIntent.status == expected_status,
+                )
+                .values(**values)
+            )
+        if result.rowcount != 1:
+            try:
+                self.session.refresh(intent)
+            except Exception as exc:  # pragma: no cover - row deletion is exceptional
+                raise IntentStateError(
+                    f"Submission intent {intent.id} disappeared during its transition"
+                ) from exc
+            raise IntentStateError(
+                f"Cannot {operation} intent {intent.id}: another session owns status "
+                f"{intent.status}"
+            )
+        self.session.flush()
+
     def _cas_status(
         self,
         intent: SubmissionIntent,
@@ -269,6 +315,54 @@ class SubmissionIntentService:
             )
         self._require_status(intent, frozenset({CLICKED}), "mark CONFIRMED")
         self._cas_status(
+            intent,
+            target_status=CONFIRMED,
+            operation="mark CONFIRMED",
+            resolved=True,
+        )
+        return True
+
+    def confirm_with_receipt_pending(
+        self,
+        intent: SubmissionIntent,
+        before: Any,
+        after: Any,
+        *,
+        bound_target: Any = None,
+        bound_intent: Any = None,
+        expected_final_url: str = "",
+        durable: bool = True,
+    ) -> bool:
+        """Validate exact receipt evidence and stage CONFIRMED without commit.
+
+        The ``CLICKED -> CONFIRMED`` compare-and-set is flushed in the
+        caller's transaction so the caller can commit application terminal
+        confirmation and intent confirmation atomically. The caller owns
+        the commit (and the rollback on failure). No independent session
+        is opened here, so this must only be called after browser execution
+        has finished; never hold this transaction across a browser click.
+        """
+
+        from app.automation.receipts import receipt_is_correlated
+
+        if not durable:
+            raise IntentStateError(
+                "Submission intents must be durable; durable=False is forbidden"
+            )
+        if bound_intent is None:
+            bound_intent = intent
+        if not receipt_is_correlated(
+            before,
+            after,
+            bound_target=bound_target,
+            bound_intent=bound_intent,
+            expected_final_url=expected_final_url,
+        ):
+            raise IntentStateError(
+                "Receipt evidence is not correlated to the exact bound submission"
+            )
+        self._require_status(intent, frozenset({CLICKED}), "mark CONFIRMED")
+        self._cas_status_pending(
             intent,
             target_status=CONFIRMED,
             operation="mark CONFIRMED",

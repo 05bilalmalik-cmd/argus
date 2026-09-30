@@ -39,7 +39,7 @@ _WORKDAY_JOURNEY_SCRIPT = r"""(() => {
       form.method = 'post';
       form.enctype = 'multipart/form-data';
       form.action = shell.dataset.formAction || '';
-      form.innerHTML = '<p>Review your application.</p><input name="first_name" value="Alex" disabled><input name="last_name" value="Sample" disabled><button type="submit" data-automation-id="submitButton" class="ats-submit">Submit application</button>';
+      form.innerHTML = '<p>Review your application.</p><input name="first_name" value="Demo" disabled><input name="last_name" value="Candidate" disabled><button type="submit" data-automation-id="submitButton" class="ats-submit">Submit application</button>';
       shell.replaceChildren(form);
       return;
     }
@@ -65,6 +65,9 @@ _PROVIDER_JOURNEY_SCRIPT = r"""(() => {
   const provider = root.dataset.provider;
   const scenario = root.dataset.scenario;
   const formAction = root.dataset.formAction;
+  // Labelled fixture property: legal-free twins keep the identical dynamic
+  // step semantics but never inject the sponsorship declaration.
+  const legalFree = root.dataset.legalFree === "1";
   const state = { step: 0, nextClicks: 0, distractionClicks: 0 };
   window.__argusProviderJourney = state;
   const render = step => {
@@ -78,7 +81,9 @@ _PROVIDER_JOURNEY_SCRIPT = r"""(() => {
       </form>`;
       root.querySelector('input[name="first_name"]').addEventListener('input', () => {
         if (root.querySelector('[data-dynamic-policy]')) return;
-        root.querySelector('[data-automation-id="submitNextButton"]').insertAdjacentHTML('beforebegin', `<label data-dynamic-policy for="provider-graduation">Expected graduation year<input id="provider-graduation" name="graduation_year" required></label><fieldset data-dynamic-policy><legend>Will you now or in future require visa sponsorship?</legend><label for="provider-sponsor-no"><input id="provider-sponsor-no" type="radio" name="sponsor" value="no" required>No</label><label for="provider-sponsor-yes"><input id="provider-sponsor-yes" type="radio" name="sponsor" value="yes" required>Yes</label></fieldset>`);
+        const graduation = `<label data-dynamic-policy for="provider-graduation">Expected graduation year<input id="provider-graduation" name="graduation_year" required></label>`;
+        const sponsorship = `<fieldset data-dynamic-policy><legend>Will you now or in future require visa sponsorship?</legend><label for="provider-sponsor-no"><input id="provider-sponsor-no" type="radio" name="sponsor" value="no" required>No</label><label for="provider-sponsor-yes"><input id="provider-sponsor-yes" type="radio" name="sponsor" value="yes" required>Yes</label></fieldset>`;
+        root.querySelector('[data-automation-id="submitNextButton"]').insertAdjacentHTML('beforebegin', legalFree ? graduation : graduation + sponsorship);
       });
       root.querySelector('[data-automation-id="submitNextButton"]').onclick = () => {
         const form = root.querySelector('form');
@@ -112,20 +117,44 @@ _SCENARIOS = {
         "description": "Known fields, approved CV, receipt and reference.",
         "adapter": "greenhouse",
     },
+    "standard-legal-free": {
+        "name": "Standard green path (legal-free)",
+        "description": "Labelled legal-free twin: identical standard form without the sponsorship declaration; the only scenario permitted to reach submit proof.",
+        "adapter": "greenhouse",
+        "legal_free": True,
+    },
     "greenhouse": {
         "name": "Greenhouse application",
         "description": "Greenhouse-style application shell with deterministic success receipt.",
         "adapter": "greenhouse",
+    },
+    "greenhouse-legal-free": {
+        "name": "Greenhouse application (legal-free)",
+        "description": "Labelled legal-free twin of the Greenhouse shell.",
+        "adapter": "greenhouse",
+        "legal_free": True,
     },
     "lever": {
         "name": "Lever application",
         "description": "Lever-style posting form with nested application questions.",
         "adapter": "lever",
     },
+    "lever-legal-free": {
+        "name": "Lever application (legal-free)",
+        "description": "Labelled legal-free twin of the Lever posting form.",
+        "adapter": "lever",
+        "legal_free": True,
+    },
     "workday": {
         "name": "Workday application",
         "description": "Workday-style data-automation controls and labelled fields.",
         "adapter": "workday",
+    },
+    "workday-legal-free": {
+        "name": "Workday application (legal-free)",
+        "description": "Labelled legal-free twin of the Workday form.",
+        "adapter": "workday",
+        "legal_free": True,
     },
     "greenhouse-popup": {
         "name": "Greenhouse popup and iframe",
@@ -147,25 +176,55 @@ _SCENARIOS = {
         "description": "Synthetic loopback provider journey with distraction-safe application root.",
         "adapter": "smartrecruiters",
     },
+    "smartrecruiters-journey-legal-free": {
+        "name": "SmartRecruiters bounded journey (legal-free)",
+        "description": "Labelled legal-free twin: identical dynamic steps without the sponsorship declaration.",
+        "adapter": "smartrecruiters",
+        "legal_free": True,
+    },
     "workable-journey": {
         "name": "Workable bounded journey",
         "description": "Synthetic loopback provider journey with distraction-safe application root.",
         "adapter": "workable",
+    },
+    "workable-journey-legal-free": {
+        "name": "Workable bounded journey (legal-free)",
+        "description": "Labelled legal-free twin: identical dynamic steps without the sponsorship declaration.",
+        "adapter": "workable",
+        "legal_free": True,
     },
     "duplicate-controls": {
         "name": "Hidden duplicate controls",
         "description": "Disabled and hidden submit duplicates must not be selected.",
         "adapter": "greenhouse",
     },
+    "duplicate-controls-legal-free": {
+        "name": "Hidden duplicate controls (legal-free)",
+        "description": "Labelled legal-free twin with identical duplicate submit-control shape.",
+        "adapter": "greenhouse",
+        "legal_free": True,
+    },
     "ambiguous-submit": {
         "name": "Ambiguous submit controls",
         "description": "Two visible final submits must fail closed before any click.",
         "adapter": "greenhouse",
     },
+    "ambiguous-submit-legal-free": {
+        "name": "Ambiguous submit controls (legal-free)",
+        "description": "Labelled legal-free twin with identical ambiguous submit-control shape.",
+        "adapter": "greenhouse",
+        "legal_free": True,
+    },
     "absent-submit": {
         "name": "Absent submit control",
         "description": "A final submit control is missing and must fail closed.",
         "adapter": "greenhouse",
+    },
+    "absent-submit-legal-free": {
+        "name": "Absent submit control (legal-free)",
+        "description": "Labelled legal-free twin with identical absent submit-control shape.",
+        "adapter": "greenhouse",
+        "legal_free": True,
     },
     "sensitive": {
         "name": "Sensitive question stop",
@@ -271,7 +330,12 @@ def lab_resolution_js_application() -> HTMLResponse:
 def lab_journey_script(scenario: str) -> Response:
     if scenario == "workday-journey":
         return Response(_WORKDAY_JOURNEY_SCRIPT, media_type="application/javascript")
-    if scenario in {"smartrecruiters-journey", "workable-journey"}:
+    if scenario in {
+        "smartrecruiters-journey",
+        "workable-journey",
+        "smartrecruiters-journey-legal-free",
+        "workable-journey-legal-free",
+    }:
         return Response(_PROVIDER_JOURNEY_SCRIPT, media_type="application/javascript")
     if scenario in {"greenhouse-popup", "lever-popup"}:
         return Response(_POPUP_JOURNEY_SCRIPT, media_type="application/javascript")
@@ -289,16 +353,18 @@ def lab_form(request: Request, scenario: str):
     journey_entry = scenario in {"greenhouse-popup", "lever-popup"} and not popup_mode and not frame_mode
     popup_url = str(request.url.replace_query_params(popup="1"))
     frame_url = str(request.url.replace_query_params(frame="1"))
+    scenario_meta = _SCENARIOS[scenario]
     return templates.TemplateResponse(
         request,
         "lab/form.html",
         {
             "scenario": scenario,
-            "scenario_meta": _SCENARIOS[scenario],
+            "scenario_meta": scenario_meta,
             "employer": "ARGUS Test Capital",
             "marker_employer": marker_employer,
             "role": "Summer Analyst",
-            "adapter_type": _SCENARIOS[scenario].get("adapter", "greenhouse"),
+            "adapter_type": scenario_meta.get("adapter", "greenhouse"),
+            "legal_free": bool(scenario_meta.get("legal_free", False)),
             "journey_entry": journey_entry,
             "popup_mode": popup_mode,
             "frame_mode": frame_mode,

@@ -371,6 +371,8 @@ def test_release_manifest_is_deterministic_and_contains_test_evidence(tmp_path: 
         "tests/e2e/test_apply_ui.py",
         "tests/e2e/test_dashboard.py",
         "tests/e2e/test_lab_adapter_variants.py",
+        "tests/e2e/test_local_portal_end_to_end.py",
+        "tests/e2e/test_static_legal_boundaries_campaign.py",
         "tests/e2e/test_submission_unknown.py",
     ):
         path = root / relative
@@ -388,7 +390,7 @@ def test_release_manifest_is_deterministic_and_contains_test_evidence(tmp_path: 
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"], check=True)
     evidence_root = root / "release-evidence"; evidence_root.mkdir()
-    names = ["unit", "integration", "tests/e2e/test_adversarial_flows.py", "tests/e2e/test_application_flows.py", "tests/e2e/test_application_navigator_journeys.py", "tests/e2e/test_apply_ui.py", "tests/e2e/test_dashboard.py", "tests/e2e/test_lab_adapter_variants.py", "tests/e2e/test_submission_unknown.py", "compile", "cli_help", "cli_safe_smoke", "audit_fresh_temp", "migration_fresh_temp", "privacy_source"]
+    names = ["unit", "integration", "tests/e2e/test_adversarial_flows.py", "tests/e2e/test_application_flows.py", "tests/e2e/test_application_navigator_journeys.py", "tests/e2e/test_apply_ui.py", "tests/e2e/test_dashboard.py", "tests/e2e/test_lab_adapter_variants.py", "tests/e2e/test_local_portal_end_to_end.py", "tests/e2e/test_static_legal_boundaries_campaign.py", "tests/e2e/test_submission_unknown.py", "compile", "cli_help", "cli_safe_smoke", "audit_fresh_temp", "migration_fresh_temp", "privacy_source"]
     logs, steps = [], []
     nonce = "state-fixture-provenance-20260825"
     interpreter = Path(sys.executable).resolve()

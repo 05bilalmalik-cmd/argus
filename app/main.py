@@ -8,7 +8,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import Settings
 from app.db import configure_database
-from app.routers import api, handoff, lab, mail, pages, scout, scout_pages, sweep
+from app.routers import api, decisions, handoff, lab, mail, pages, scout, scout_pages, sweep, review_queue
+from app.routers import review_pages
 from app.security.crypto import CryptoBox
 from app.security.http import LocalSecurityMiddleware
 from app.services.navigator import ApplicationNavigator, bind_service_navigator
@@ -89,6 +90,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.include_router(api.router)
+    app.include_router(decisions.router)
     app.include_router(mail.router)
     app.include_router(lab.router)
     app.include_router(pages.router)
@@ -96,6 +98,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(scout_pages.router)
     app.include_router(sweep.router)
     app.include_router(handoff.router)
+    app.include_router(review_queue.router)
+    app.include_router(review_pages.router)
 
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon() -> Response:

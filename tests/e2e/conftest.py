@@ -70,7 +70,10 @@ def persist_verified_lab_target(
                         "employer": "ARGUS Test Capital",
                         "role": "Summer Analyst",
                         "requisition": urlsplit(target_url).path,
-                        "form_identity": target_url.rstrip("/").rsplit("/", 1)[-1],
+                        # Path-derived (never the raw URL tail): a
+                        # query-bearing lab URL keeps the same requisition
+                        # and form identity as its canonical target.
+                        "form_identity": urlsplit(target_url).path.rstrip("/").rsplit("/", 1)[-1],
                     },
                 ),
             )

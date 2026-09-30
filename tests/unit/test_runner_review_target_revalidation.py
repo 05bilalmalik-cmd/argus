@@ -45,7 +45,7 @@ def test_greenhouse_bootstrap_urls_do_not_trigger_script_exfiltration_guard() ->
         opportunity=opportunity,
         resolution=resolution,
         mode=RunMode.REVIEW,
-        profile_values={"identity.first_name": "Alex"},
+        profile_values={"identity.first_name": "Demo"},
         answers={},
         documents={},
     )
@@ -165,7 +165,7 @@ def test_prefill_populates_approved_fields_before_required_answer_handoff() -> N
             evidence={"synthetic_lab": True},
         ),
         mode=RunMode.PREFILL,
-        profile_values={"identity.first_name": "Alex"},
+        profile_values={"identity.first_name": "Demo"},
         answers={},
         documents={},
     )
@@ -175,7 +175,7 @@ def test_prefill_populates_approved_fields_before_required_answer_handoff() -> N
 
     assert outcome["state"] == "NEEDS_USER"
     assert "unknown_required_field" in outcome["blocked_reasons"]
-    assert adapter.filled == [("first_name", "Alex")]
+    assert adapter.filled == [("first_name", "Demo")]
     assert outcome["manifest"]["prefilled_fields"] == ["first_name"]
     assert outcome["manifest"]["submission"] == "not_clicked"
 

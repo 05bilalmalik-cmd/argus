@@ -114,6 +114,14 @@ _SUBMISSION_TERMINAL_STATES = {
     ApplicationState.SUBMITTED.value,
     ApplicationState.CONFIRMATION_VERIFIED.value,
 }
+# Target kinds the no-login skip reports without ever running. The runnable
+# candidate query already excludes them via Opportunity.automation_url; this
+# tuple lets run_autopilot name them in skip counts/details instead of
+# leaving correctly classified walls invisible.
+_LOGIN_WALL_SKIP_KINDS = (
+    TargetKind.AUTH_WALL.value,
+    TargetKind.HUMAN_CHALLENGE.value,
+)
 _USABLE_EXPLICIT_PROGRAMME_TYPES = frozenset(
     {
         ProgrammeType.YEAR_IN_INDUSTRY,
@@ -1338,6 +1346,72 @@ class ScoutService:
         )
         return candidates
 
+    def _visible_login_wall_skips(
+        self,
+        *,
+        exclude_application_ids: frozenset[str],
+        scope_ids: frozenset[str] | None = None,
+    ) -> list[tuple[Application, Opportunity]]:
+        """Known login/captcha walls excluded from runnable candidates.
+
+        Mirrors autopilot_candidates() filters exactly, replacing only the
+        automation-url gate with the AUTH_WALL/HUMAN_CHALLENGE predicate, so
+        a correctly classified wall is reported in skip counts/details while
+        never entering runnable candidates, opening a browser, submitting,
+        or consuming the runnable budget. Opportunity.automation_url and
+        target trust are unchanged.
+        """
+        rows = self.session.execute(
+            select(Application, Opportunity)
+            .join(Opportunity, Application.opportunity_id == Opportunity.id)
+            .where(
+                Application.state.in_(OPEN_STATES),
+                Opportunity.application_window_status
+                == ApplicationWindowStatus.OPEN.value,
+                Opportunity.user_status.in_(
+                    (
+                        UserApplicationStatus.INTERESTED.value,
+                        UserApplicationStatus.NOT_APPLIED.value,
+                    )
+                ),
+                ~Opportunity.archive_record.has(
+                    OpportunityArchive.archived_at.is_not(None)
+                ),
+                Opportunity.target_status.in_(_LOGIN_WALL_SKIP_KINDS),
+            )
+        ).all()
+        skipped: list[tuple[Application, Opportunity]] = []
+        for application, opportunity in rows:
+            if application.id in exclude_application_ids:
+                continue
+            if scope_ids is not None and application.id not in scope_ids:
+                continue
+            if out_of_scope_programme_reason(
+                opportunity.role_title,
+                opportunity.programme_group,
+            ) is not None:
+                continue
+            if opportunity.deadline is not None and opportunity.deadline < date.today():
+                continue
+            group = opportunity.programme_group or classify_programme(
+                opportunity.role_title
+            ).value
+            if not should_auto_apply(group):
+                continue
+            if group == ProgrammeType.SUMMER.value and self._employer_has_open_yii(
+                opportunity.employer
+            ):
+                continue
+            skipped.append((application, opportunity))
+        skipped.sort(
+            key=lambda pair: (
+                user_status_work_rank(pair[1].user_status),
+                pair[0].priority,
+                pair[1].deadline or date.max,
+            )
+        )
+        return skipped
+
     def run_autopilot(
         self,
         runner_factory,
@@ -1346,6 +1420,7 @@ class ScoutService:
         headed: bool = False,
         submit: bool | None = None,
         confirmed_application_ids: Iterable[str] | None = None,
+        application_scope: Iterable[str] | None = None,
     ) -> dict[str, object]:
         """Drive eligible applications through the full pipeline.
 
@@ -1357,7 +1432,15 @@ class ScoutService:
         after a fresh, action-time confirmation of the displayed employer and
         role. Batch/scheduled callers intentionally omit it and therefore stop
         at the confirmation boundary. Anything else requiring a human stops
-        cleanly and is reported.
+        cleanly and is reported. ``max_runs`` budgets runner REVIEW attempts;
+        rows examined without a run are still counted in ``processed``.
+        ``application_scope`` restricts the run to exact application IDs:
+        ``None`` is the ordinary unscoped sweep (all candidates), while an
+        explicit set — including the empty set — matches only those IDs and
+        never falls back to all candidates. Batch confirmation supplies no
+        session_id/authority_id, so a scoped run never submits: confirmed
+        ready outcomes stop at an explicit action-time confirmation
+        requirement pointing at the per-application submit route.
         """
         from app.automation.types import RunMode  # local import avoids cycle
 
@@ -1365,12 +1448,22 @@ class ScoutService:
             True if submit is None else bool(submit)
         )
         confirmed_ids = frozenset(str(item) for item in (confirmed_application_ids or ()))
+        # None = autonomous sweep over every candidate. Any explicit value —
+        # even empty — is a closed scope: only those application IDs may be
+        # examined, run, or reported. There is no fallback to all candidates.
+        scope_ids = (
+            None
+            if application_scope is None
+            else frozenset(str(item) for item in application_scope)
+        )
         results = {
             "processed": 0,
+            "attempted_runs": 0,
             "submitted": 0,
             "needs_user": 0,
             "blocked": 0,
             "failed": 0,
+            "skipped_login_required": 0,
             "mode": self.settings.automation_mode.value,
             "submission_armed": allow_submission,
             "details": [],
@@ -1379,9 +1472,20 @@ class ScoutService:
             results["disabled_reason"] = "automation_off"
             self._audit_autopilot(results)
             return results
+        # max_runs budgets runner attempts (REVIEW calls), not examinations:
+        # rows that stop in the pipeline without a run (stale user status,
+        # parked states, skips) are counted honestly in processed/blocked/
+        # needs_user but must not starve a genuinely runnable no-login target
+        # sorted behind them. Skipped login walls never consume this budget.
+        seen_application_ids: set[str] = set()
         for application, opportunity in self.autopilot_candidates():
-            if results["processed"] >= max_runs:
+            if results["attempted_runs"] >= max_runs:
                 break
+            if scope_ids is not None and application.id not in scope_ids:
+                # Out-of-scope rows are not examined: no pipeline mutation,
+                # no counters, no budget consumption, no reporting here.
+                continue
+            seen_application_ids.add(application.id)
             if opportunity.is_archived:
                 continue
             if not opportunity.is_open_for_applications:
@@ -1397,6 +1501,28 @@ class ScoutService:
                 "role": opportunity.role_title,
                 "programme": opportunity.programme_group,
             }
+            if self.settings.autopilot_skip_login_required:
+                try:
+                    resolved_kind = (
+                        TargetKind(opportunity.target_status)
+                        if opportunity.target_status
+                        else None
+                    )
+                except ValueError:
+                    resolved_kind = None
+                if resolved_kind in {
+                    TargetKind.AUTH_WALL,
+                    TargetKind.HUMAN_CHALLENGE,
+                }:
+                    entry["result"] = "skipped:login_required"
+                    entry["reason"] = (
+                        f"Target requires human login/verification "
+                        f"({resolved_kind.value}); skipped by "
+                        "ARGUS_AUTOPILOT_SKIP_LOGIN_REQUIRED"
+                    )
+                    results["skipped_login_required"] += 1
+                    results["details"].append(entry)
+                    continue
             self.session.flush()
             self.session.refresh(opportunity, attribute_names=["user_status"])
             if not user_status_is_automation_eligible(opportunity.user_status):
@@ -1427,6 +1553,20 @@ class ScoutService:
                             fresh,
                             key=lambda a: a.state != ApplicationState.DISCOVERED.value,
                         )
+                        if scope_ids is not None and application.id not in scope_ids:
+                            # evaluate() re-pointed at a different application
+                            # row that is outside the confirmed scope. Fail
+                            # closed: never widen the scope by replacement.
+                            seen_application_ids.add(application.id)
+                            entry["result"] = "blocked:scope_identity_changed"
+                            entry["reason"] = (
+                                "Pipeline re-pointed at an application outside "
+                                "the confirmed scope; refusing to run it"
+                            )
+                            results["blocked"] += 1
+                            results["processed"] += 1
+                            results["details"].append(entry)
+                            continue
                 if application.state == ApplicationState.ELIGIBILITY_CHECKED.value:
                     service.queue(application.id)
                     service.prepare(application.id)
@@ -1439,6 +1579,31 @@ class ScoutService:
                     ApplicationState.FILLING.value,
                     ApplicationState.FAILED_RETRYABLE.value,
                 }:
+                    if (
+                        scope_ids is not None
+                        and application.id in confirmed_ids
+                        and application.state == ApplicationState.READY_TO_SUBMIT.value
+                    ):
+                        # A confirmed READY selection still carries no
+                        # session_id/authority_id, so it cannot submit through
+                        # the batch path. Keep it visible for the human with an
+                        # explicit per-application action-time requirement.
+                        entry["result"] = "awaiting_action_time_confirmation"
+                        entry["confirmation_required"] = True
+                        entry["state"] = ApplicationState.READY_TO_SUBMIT.value
+                        entry["submit_route"] = (
+                            f"/api/applications/{application.id}/run?mode=submit"
+                        )
+                        entry["reason"] = (
+                            "Batch confirmation carries application IDs only; "
+                            "final submission additionally requires session_id "
+                            "and authority_id via POST "
+                            "/api/applications/{id}/run?mode=submit"
+                        )
+                        results["needs_user"] += 1
+                        results["details"].append(entry)
+                        results["processed"] += 1
+                        continue
                     entry["result"] = f"stopped:{application.state}"
                     if application.state in {
                         ApplicationState.NEEDS_USER.value,
@@ -1467,6 +1632,7 @@ class ScoutService:
                     continue
 
                 # First pass: review (fills the form, computes risk, no submit)
+                results["attempted_runs"] += 1
                 outcome = runner_factory(application.id, RunMode.REVIEW, headed)
                 entry["risk"] = outcome.get("risk_level")
                 entry["adapter"] = outcome.get("adapter")
@@ -1495,6 +1661,28 @@ class ScoutService:
                         entry["result"] = "awaiting_action_time_confirmation"
                         entry["confirmation_required"] = True
                         entry["state"] = state
+                        results["needs_user"] += 1
+                        results["processed"] += 1
+                        results["details"].append(entry)
+                        continue
+                    if scope_ids is not None:
+                        # Confirmed application IDs are not submit authority:
+                        # the batch path never supplies session_id and
+                        # authority_id, so the runner guards could not accept
+                        # a submit. Stop here with an explicit per-application
+                        # action-time requirement instead of calling SUBMIT.
+                        entry["result"] = "awaiting_action_time_confirmation"
+                        entry["confirmation_required"] = True
+                        entry["state"] = state
+                        entry["submit_route"] = (
+                            f"/api/applications/{application.id}/run?mode=submit"
+                        )
+                        entry["reason"] = (
+                            "Batch confirmation carries application IDs only; "
+                            "final submission additionally requires session_id "
+                            "and authority_id via POST "
+                            "/api/applications/{id}/run?mode=submit"
+                        )
                         results["needs_user"] += 1
                         results["processed"] += 1
                         results["details"].append(entry)
@@ -1553,6 +1741,79 @@ class ScoutService:
                     continue
             results["processed"] += 1
             results["details"].append(entry)
+        if self.settings.autopilot_skip_login_required:
+            # Correctly classified walls never enter runnable candidates, so
+            # without this pass they are invisible in sweep accounting. Report
+            # them here: details/skip counts only, no runner, no submission,
+            # no runnable-budget consumption. Rows already reported in the loop
+            # above (stale or mocked) are excluded to avoid double counting.
+            for application, opportunity in self._visible_login_wall_skips(
+                exclude_application_ids=frozenset(seen_application_ids),
+                scope_ids=scope_ids,
+            ):
+                seen_application_ids.add(application.id)
+                try:
+                    wall_kind = (
+                        TargetKind(opportunity.target_status)
+                        if opportunity.target_status
+                        else None
+                    )
+                except ValueError:
+                    wall_kind = None
+                if wall_kind not in {
+                    TargetKind.AUTH_WALL,
+                    TargetKind.HUMAN_CHALLENGE,
+                }:
+                    continue
+                results["details"].append(
+                    {
+                        "application_id": application.id,
+                        "employer": opportunity.employer,
+                        "role": opportunity.role_title,
+                        "programme": opportunity.programme_group,
+                        "result": "skipped:login_required",
+                        "reason": (
+                            "Target requires human login/verification "
+                            f"({wall_kind.value}); skipped by "
+                            "ARGUS_AUTOPILOT_SKIP_LOGIN_REQUIRED"
+                        ),
+                    }
+                )
+                results["skipped_login_required"] += 1
+        if scope_ids is not None:
+            # Candidate selection and the run budget say nothing about existence.
+            # Report unvisited scoped rows without making them runnable.
+            for pending_id in sorted(scope_ids - seen_application_ids):
+                known = self.session.get(Application, pending_id)
+                if known is None:
+                    results["details"].append({
+                        "application_id": pending_id,
+                        "result": "unknown_application_id",
+                    })
+                    continue
+                opportunity = self.session.get(Opportunity, known.opportunity_id)
+                detail = {"application_id": pending_id, "state": known.state}
+                if (
+                    self.settings.autopilot_skip_login_required
+                    and opportunity is not None
+                    and opportunity.target_status in {
+                        TargetKind.AUTH_WALL.value, TargetKind.HUMAN_CHALLENGE.value,
+                    }
+                ):
+                    detail["result"] = "skipped:login_required"
+                    results["skipped_login_required"] += 1
+                elif known.state in {
+                    ApplicationState.NEEDS_USER.value, ApplicationState.NEEDS_OA.value,
+                }:
+                    detail["result"] = f"stopped:{known.state}"
+                    results["needs_user"] += 1
+                    results["processed"] += 1
+                elif known.state in OPEN_STATES and results["attempted_runs"] >= max_runs:
+                    detail["result"] = "deferred:max_runs"
+                else:
+                    detail["result"] = f"stopped:{known.state}"
+                    detail["reason"] = "not_eligible_for_autopilot"
+                results["details"].append(detail)
         self.session.flush()
         self._audit_autopilot(results)
         return results

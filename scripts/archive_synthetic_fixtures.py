@@ -20,7 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 os.environ.setdefault(
     "ARGUS_DATA_DIR",
-    str(Path(os.environ.get("LOCALAPPDATA", "/c/Users/demo/AppData/Local")) / "ARGUS"),
+    str(Path(os.environ.get("LOCALAPPDATA", "/c/Users/there/AppData/Local")) / "ARGUS"),
 )
 
 from app.config import Settings

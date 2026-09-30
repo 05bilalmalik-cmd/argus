@@ -21,7 +21,7 @@ from app.services.answers import _STOPWORDS  # noqa: E402
 from scripts.seed_answers import AnswerSpec, ProfileFacts, plan_answers  # noqa: E402
 
 PROFILE = ProfileFacts(
-    university="Example University",
+    university="Lancaster University",
     degree="Bachelor of Science, Finance",
     graduation_year=2028,
     linkedin_url="https://www.linkedin.com/in/demo-candidate",

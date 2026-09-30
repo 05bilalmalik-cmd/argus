@@ -21,7 +21,7 @@ def test_audit_chain_verifies_ordered_events(tmp_path: Path) -> None:
         )
         append_audit(
             session,
-            AuditInput("alex", "profile.approved", "profile", "1", {"approved": True}),
+            AuditInput("demo", "profile.approved", "profile", "1", {"approved": True}),
         )
         verification = verify_audit_chain(session)
 

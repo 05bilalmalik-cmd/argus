@@ -132,6 +132,52 @@ def test_scanner_ignores_dates_ips_and_digits_only_identifiers(tmp_path: Path) -
     assert scan_source(tmp_path, load_config(CONFIG)) == []
 
 
+def test_scanner_ignores_iso_timestamps_and_unroutable_message_ids(tmp_path: Path) -> None:
+    """Precision guard: a scanner that cries wolf is one people stop reading.
+
+    The phone pattern cannot cross a colon, so an ISO timestamp reached the
+    date guard as ``2026-09-10 14`` and was reported as a candidate phone
+    number -- every fixture timestamp in the tracker tests was a finding.
+    Message-ids under the RFC 2606 reserved .invalid TLD were reported as
+    candidate email addresses for the same reason.
+    """
+
+    source = tmp_path / "app"
+    source.mkdir()
+    (source / "fixtures.py").write_text(
+        'published_at = "2026-09-10 14:51:57 UTC"\n'
+        'created_at = "2026-07-23T09:44:28Z"\n'
+        'released_on = "2026-09-10"\n'
+        'message_id = "<argus-test-9f2a@argus.invalid>"\n',
+        encoding="utf-8",
+    )
+
+    assert scan_source(tmp_path, load_config(CONFIG)) == []
+
+
+def test_reserved_invalid_tld_does_not_blind_realistic_personal_domains(
+    tmp_path: Path,
+) -> None:
+    """The .invalid allowance must not generalise to the rest of RFC 2606.
+
+    The suite plants ``private.example`` addresses as realistic personal
+    literals it expects to catch, and policy allowlists the exact domain
+    ``example.test`` rather than all of ``.test``. Widening the allowance to
+    every reserved TLD silently blinds those plants.
+    """
+
+    source = tmp_path / "app"
+    source.mkdir()
+    (source / "leak.py").write_text(
+        'contact = "ada.lovelace@private.example"\n',
+        encoding="utf-8",
+    )
+
+    findings = scan_source(tmp_path, load_config(CONFIG))
+
+    assert [finding.category for finding in findings] == ["email"]
+
+
 def test_requisition_or_job_id_on_same_line_does_not_hide_a_phone(tmp_path: Path) -> None:
     source = tmp_path / "app"
     source.mkdir()
@@ -188,7 +234,7 @@ def test_scanner_covers_tests_docs_root_and_utf16_or_binary_payloads(tmp_path: P
 
 def test_packaged_release_artifact_is_scanned_after_build(tmp_path: Path) -> None:
     root = tmp_path / "repo"
-    for relative in ("app/main.py", "extension/manifest.json", "scripts/setup.sh", "pyproject.toml", "requirements.txt", "README.md", "SECURITY.md", "OPERATIONS.md", "VERIFICATION.md", "tests/e2e/test_adversarial_flows.py", "tests/e2e/test_application_flows.py", "tests/e2e/test_application_navigator_journeys.py", "tests/e2e/test_apply_ui.py", "tests/e2e/test_dashboard.py", "tests/e2e/test_lab_adapter_variants.py", "tests/e2e/test_submission_unknown.py"):
+    for relative in ("app/main.py", "extension/manifest.json", "scripts/setup.sh", "pyproject.toml", "requirements.txt", "README.md", "SECURITY.md", "OPERATIONS.md", "VERIFICATION.md", "tests/e2e/test_adversarial_flows.py", "tests/e2e/test_application_flows.py", "tests/e2e/test_application_navigator_journeys.py", "tests/e2e/test_apply_ui.py", "tests/e2e/test_dashboard.py", "tests/e2e/test_lab_adapter_variants.py", "tests/e2e/test_local_portal_end_to_end.py", "tests/e2e/test_static_legal_boundaries_campaign.py", "tests/e2e/test_submission_unknown.py"):
         path = root / relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(relative, encoding="utf-8")
     (root / "pyproject.toml").write_text('[project]\nname = "fixture"\nversion = "0.2.0"\n', encoding="utf-8")
     (root / "packaging" / "privacy_scan_config.json").parent.mkdir(parents=True, exist_ok=True)
@@ -201,7 +247,7 @@ def test_packaged_release_artifact_is_scanned_after_build(tmp_path: Path) -> Non
     subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"], check=True)
     evidence_root = root / "release-evidence"
     evidence_root.mkdir()
-    names = ["unit", "integration", "tests/e2e/test_adversarial_flows.py", "tests/e2e/test_application_flows.py", "tests/e2e/test_application_navigator_journeys.py", "tests/e2e/test_apply_ui.py", "tests/e2e/test_dashboard.py", "tests/e2e/test_lab_adapter_variants.py", "tests/e2e/test_submission_unknown.py", "compile", "cli_help", "cli_safe_smoke", "audit_fresh_temp", "migration_fresh_temp", "privacy_source"]
+    names = ["unit", "integration", "tests/e2e/test_adversarial_flows.py", "tests/e2e/test_application_flows.py", "tests/e2e/test_application_navigator_journeys.py", "tests/e2e/test_apply_ui.py", "tests/e2e/test_dashboard.py", "tests/e2e/test_lab_adapter_variants.py", "tests/e2e/test_local_portal_end_to_end.py", "tests/e2e/test_static_legal_boundaries_campaign.py", "tests/e2e/test_submission_unknown.py", "compile", "cli_help", "cli_safe_smoke", "audit_fresh_temp", "migration_fresh_temp", "privacy_source"]
     logs, steps = [], []
     nonce = "privacy-fixture-provenance-20260825"
     interpreter = Path(sys.executable).resolve(); started = datetime.now(timezone.utc)

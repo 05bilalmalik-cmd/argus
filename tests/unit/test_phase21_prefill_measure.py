@@ -19,7 +19,7 @@ APP_ID = "75db5b22-02c7-4cbf-967f-ec63a4b8655a"
 OTHER_APP_ID = "94a2189c-75df-43b7-9dff-d02f28f51eb5"
 SENTINEL_VALUE = "candidate-secret-value@argus.local"
 PII_SENTINELS = (
-    "Alex Candidate",
+    "Demo Candidate",
     "London Candidate Home",
     "".join(("+", "44", " ", "7700", " ", "900", "123")),
     "demo@argus.local",

@@ -204,6 +204,8 @@ _CORE_E2E_EVIDENCE = frozenset(
         "tests/e2e/test_apply_ui.py",
         "tests/e2e/test_dashboard.py",
         "tests/e2e/test_lab_adapter_variants.py",
+        "tests/e2e/test_local_portal_end_to_end.py",
+        "tests/e2e/test_static_legal_boundaries_campaign.py",
         "tests/e2e/test_submission_unknown.py",
     }
 )

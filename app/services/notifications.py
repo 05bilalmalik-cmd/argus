@@ -308,7 +308,10 @@ class _HermesBackend:
 
     def send(self, payload: dict[str, object]) -> None:
         safe_command = [self._executable, "send", "-t", self._target]
-        argv = [*safe_command, str(payload["message"])]
+        message = payload.get("message")
+        if message is None:
+            message = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        argv = [*safe_command, str(message)]
         try:
             result = self._runner(
                 argv,
@@ -1122,6 +1125,24 @@ class NotificationService:
             "reason": _reason_label(event.reason),
             "url": f"{self._local_base_url}/needs-you/{quote(event.application_id, safe='')}",
         }
+
+    def send_decision_payload(self, payload: dict[str, object]) -> bool:
+        """Send a structured decision payload through the existing backend fanout.
+
+        This is a fire-and-forget delivery for typed decision envelopes.
+        Returns whether delivery was attempted (i.e., service is enabled).
+        """
+        if not self._enabled:
+            return False
+        try:
+            self._backend.send(payload)
+        except Exception as exc:  # noqa: BLE001 - delivery must never block the caller
+            LOGGER.warning(
+                "decision payload delivery failed; application run continues (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
+        return True
 
 
 class NavigatorNotificationMonitor:

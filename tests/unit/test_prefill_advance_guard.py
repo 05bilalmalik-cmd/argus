@@ -69,7 +69,7 @@ def test_prefill_with_risk_zero_does_not_advance():
         actions=[
             SimpleNamespace(
                 field=fields[0],
-                value="Alex",
+                value="Demo",
                 status="resolved",
             )
         ],

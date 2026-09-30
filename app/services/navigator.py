@@ -786,6 +786,69 @@ def _require_canonical_values(
         )
 
 
+# Explicit, human-reviewable employer-alias bindings for the persisted-target
+# wrong-employer gate in `_load_verified_target_from_opportunity`.
+#
+# Each entry is a (provider, tenant, canonical employer, canonical alias)
+# quadruple, all already canonicalised: provider and tenant are casefolded
+# requisition-identity components from the bound application URL, employer and
+# alias are `_canonical_identity_text` values.  An evidence employer value
+# passes only on exact canonical equality OR on membership of this table for
+# the exact bound (provider, tenant, employer) triple.  Anything unrecorded
+# still fails closed with the same "employer evidence contradicts" error.
+#
+# The table is intentionally EMPTY until a human confirms each alias against
+# an independent source (for example the firm's official careers page linking
+# to that ATS board).  Candidate awaiting confirmation (DO NOT enable without
+# that check):
+#   ("greenhouse", "ctccampusboard", "chicago trading company",
+#    "ctc campus external not advertised")
+EMPLOYER_ALIAS_BINDINGS: frozenset = frozenset()
+
+
+def _employer_alias_binding_allows(
+    *, provider: str, tenant: str, authoritative_employer: str, evidence_value: str
+) -> bool:
+    """Report whether one evidence employer value is an explicitly bound alias."""
+    return (
+        str(provider or "").casefold().strip(),
+        str(tenant or "").casefold().strip(),
+        _canonical_identity_text(authoritative_employer),
+        _canonical_identity_text(evidence_value),
+    ) in EMPLOYER_ALIAS_BINDINGS
+
+
+def _require_bound_employer_values(
+    values: list[str],
+    expected: str,
+    *,
+    provider: str,
+    tenant: str,
+) -> None:
+    """Bind persisted employer evidence without loosening the wrong-employer gate."""
+    if not values:
+        raise PersistedTargetResolutionError(
+            "Serialized target-resolution employer evidence is missing"
+        )
+    canonical_expected = _canonical_identity_text(expected)
+    if not canonical_expected:
+        raise PersistedTargetResolutionError(
+            "Serialized target-resolution employer evidence contradicts the verified contract"
+        )
+    for value in values:
+        if _canonical_identity_text(value) == canonical_expected:
+            continue
+        if not _employer_alias_binding_allows(
+            provider=provider,
+            tenant=tenant,
+            authoritative_employer=expected,
+            evidence_value=value,
+        ):
+            raise PersistedTargetResolutionError(
+                "Serialized target-resolution employer evidence contradicts the verified contract"
+            )
+
+
 def _load_verified_target_from_opportunity(opportunity: Any) -> TargetResolution:
     """Load and cross-bind one immutable persisted TargetResolution envelope.
 
@@ -890,7 +953,13 @@ def _load_verified_target_from_opportunity(opportunity: Any) -> TargetResolution
     employer_values = list(_scalar_evidence_values(evidence, EMPLOYER_EVIDENCE_KEYS))
     role_values = list(_scalar_evidence_values(evidence, ROLE_EVIDENCE_KEYS))
     _require_canonical_values(provider_values, authoritative_provider, label="provider")
-    _require_canonical_values(employer_values, str(opportunity.employer), label="employer")
+    authoritative_identity = requisition_identity_from_url(authoritative_final)
+    _require_bound_employer_values(
+        employer_values,
+        str(opportunity.employer),
+        provider=authoritative_identity.provider if authoritative_identity is not None else "",
+        tenant=authoritative_identity.tenant if authoritative_identity is not None else "",
+    )
     _require_canonical_values(role_values, str(opportunity.role_title), label="role")
 
     requisition_values = list(
@@ -4992,6 +5061,22 @@ class HeadedSessionWorker(threading.Thread):
                     fatal=True,
                     reason="read_only_data_bearing_request",
                 )
+            if (
+                decision.allowed
+                and str(getattr(self, "mode", "")).casefold() == "prefill"
+                and str(method or "").casefold() in {"post", "put", "patch", "delete"}
+            ):
+                # PREFILL is fill-only: page JavaScript, autosave, or an
+                # uploader must not emit a mutating request merely because
+                # the origin is trusted.  GET/HEAD/OPTIONS read-only
+                # navigation still flows, and SUBMIT keeps its action-time
+                # authorized path untouched.
+                decision = replace(
+                    decision,
+                    allowed=False,
+                    fatal=True,
+                    reason="prefill_mutating_request_blocked",
+                )
         if decision is not None:
             if (
                 apply_binding_active
@@ -6742,6 +6827,10 @@ class HeadedSessionWorker(threading.Thread):
                     if stop is not None:
                         self._call("playwright.stop", stop)
                     self._teardown_observations["playwright_stopped"] = True
+                    # Drop the handle after a successful stop so a bounded
+                    # retry following an unrelated teardown failure can never
+                    # stop the same Playwright instance twice.
+                    self._runtime = None
                 except Exception as exc:  # noqa: BLE001 - record and continue teardown
                     failure = f"playwright.stop: {type(exc).__name__}: {exc}"
                     failures.append(failure)
@@ -7324,8 +7413,10 @@ class ApplicationNavigator:
             self._source_executors[session_id] = executor
             worker.start()
 
-        # The flag-off path keeps the established resumable source session.
-        # The sterile flag-on path uses this wait only to complete its single
+        # The headed flag-off path keeps the established resumable source
+        # session.  The headless (batch) flag-off path disposes its single
+        # attempt below, then destroys the context before returning.  The
+        # sterile flag-on path uses this wait only to complete its single
         # attempt, then destroys the context before returning.
         try:
             self._command(session_id, SessionCommandType.RUN_JOURNEY)
@@ -7359,13 +7450,26 @@ class ApplicationNavigator:
             executor.resolution is not None
             and executor.resolution.verified_for_automation
         )
-        if verified or self.apply_click_enabled:
+        # A headless batch attempt owns an invisible worker that no human
+        # can continue.  Retaining it keeps its Playwright driver
+        # (driver/node.exe) alive until the 24h session TTL, which leaks
+        # one driver per resolve-target call.  Dispose it exactly like the
+        # verified and sterile paths; interactive headed sessions stay
+        # resumable below.
+        dispose_batch_attempt = (
+            not bool(headed) and not verified and not self.apply_click_enabled
+        )
+        if verified or self.apply_click_enabled or dispose_batch_attempt:
             self.close(
                 session_id,
                 reason=(
                     "sterile resolution attempt complete"
                     if self.apply_click_enabled
-                    else "verified source target captured"
+                    else (
+                        "verified source target captured"
+                        if verified
+                        else "batch resolution attempt complete"
+                    )
                 ),
             )
             cleaned = self.wait_for_cleanup(
@@ -7373,17 +7477,25 @@ class ApplicationNavigator:
                 timeout=min(2.0, self.ttl_seconds),
             )
             if cleaned.worker_alive or not cleaned.cleanup_complete:
-                return None, self._source_handoff(
-                    cleaned,
-                    reason=(
+                if self.apply_click_enabled:
+                    incomplete_reason = (
                         "sterile source owner cleanup incomplete; result blocked "
                         "until worker_alive=false and cleanup_complete=true"
-                        if self.apply_click_enabled
-                        else
+                    )
+                elif verified:
+                    incomplete_reason = (
                         "verified source target captured; source owner cleanup "
                         "incomplete, promotion blocked until worker_alive=false "
                         "and cleanup_complete=true"
-                    ),
+                    )
+                else:
+                    incomplete_reason = (
+                        "batch source owner cleanup incomplete; result blocked "
+                        "until worker_alive=false and cleanup_complete=true"
+                    )
+                return None, self._source_handoff(
+                    cleaned,
+                    reason=incomplete_reason,
                 )
             snapshot = self.get(session_id)
         handoff = self._source_handoff(snapshot)
@@ -7392,6 +7504,24 @@ class ApplicationNavigator:
                 {
                     "status": "sterile_attempt_complete",
                     "reason": "Sterile resolution attempt complete; context destroyed",
+                    "next_action": (
+                        "Review the recorded resolution outcome; start a new "
+                        "resolution attempt if another inspection is required."
+                    ),
+                    "visible": False,
+                    "headed": False,
+                    "can_continue": False,
+                    "resumable": False,
+                }
+            )
+        elif dispose_batch_attempt:
+            # The session above is already closed and cleaned up, so the
+            # handoff must not advertise a continuation that no longer
+            # exists.  A fresh attempt creates a new owner when needed.
+            handoff.update(
+                {
+                    "status": "batch_attempt_complete",
+                    "reason": "Batch resolution attempt complete; context destroyed",
                     "next_action": (
                         "Review the recorded resolution outcome; start a new "
                         "resolution attempt if another inspection is required."

@@ -15,6 +15,31 @@ from app.security.audit import AuditInput, append_audit
 from app.security.crypto import CryptoBox
 
 
+def _parse_admissible_years(json_text: str | None) -> tuple[int, ...]:
+    """Parse admissible_graduation_years_json defensively.
+
+    Requires a JSON list of integers in range 1950-2100.
+    On any malformed input (invalid JSON, not a list, non-int items, out-of-range),
+    returns empty tuple to fail closed - caller falls back to legacy single-year behavior.
+    """
+    if not json_text:
+        return ()
+    try:
+        parsed = json.loads(json_text)
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(parsed, list):
+        return ()
+    years: list[int] = []
+    for item in parsed:
+        if not isinstance(item, int):
+            return ()
+        if not (1950 <= item <= 2100):
+            return ()
+        years.append(item)
+    return tuple(years)
+
+
 @dataclass(frozen=True, slots=True)
 class ProfileUpdate:
     first_name: str | None = None
@@ -32,6 +57,7 @@ class ProfileUpdate:
     graduation_year: int | None = None
     current_study_year: str | None = None
     preferred_locations: tuple[str, ...] | None = None
+    admissible_graduation_years: tuple[int, ...] | None = None
     work_authorisation: str | None = None
     requires_sponsorship: bool | None = None
     work_authorisation_approved: bool | None = None
@@ -76,6 +102,9 @@ class ProfileService:
                 changed.append(name)
             elif name == "preferred_locations":
                 profile.preferred_locations_json = json.dumps(list(value))
+                changed.append(name)
+            elif name == "admissible_graduation_years":
+                profile.admissible_graduation_years_json = json.dumps(list(value))
                 changed.append(name)
             elif name == "work_authorisation":
                 profile.work_authorisation_ciphertext = self.crypto.encrypt(value)
@@ -142,18 +171,24 @@ class ProfileService:
             "education.degree": profile.degree,
             "education.current_study_year": profile.current_study_year,
         }
+        admissible_years = _parse_admissible_years(profile.admissible_graduation_years_json)
         if framing is None:
             values[CanonicalKey.GRADUATION_YEAR.value] = profile.graduation_year
             values[CanonicalKey.EDUCATION_END_YEAR.value] = profile.graduation_year
+        elif admissible_years:
+            if framing.graduation_year in admissible_years:
+                values[CanonicalKey.GRADUATION_YEAR.value] = framing.graduation_year
+                values[CanonicalKey.EDUCATION_END_YEAR.value] = framing.graduation_year
+            else:
+                values[CanonicalKey.PROGRAMME_GRADUATION_CONFLICT.value] = True
+                values["guard.programme_graduation_stored"] = profile.graduation_year
+                values["guard.programme_graduation_tier"] = framing.graduation_year
+                values["guard.programme_admissible_years"] = admissible_years
         elif profile.graduation_year is not None:
             if profile.graduation_year == framing.graduation_year:
                 values[CanonicalKey.GRADUATION_YEAR.value] = profile.graduation_year
                 values[CanonicalKey.EDUCATION_END_YEAR.value] = profile.graduation_year
             else:
-                # The row's programme framing and the stored profile are
-                # contradictory evidence.  Keep the fact out of the fill
-                # inputs; the runner carries this transient guard into the
-                # plan so every graduation-derived field stays blank.
                 values[CanonicalKey.PROGRAMME_GRADUATION_CONFLICT.value] = True
                 values["guard.programme_graduation_stored"] = profile.graduation_year
                 values["guard.programme_graduation_tier"] = framing.graduation_year
@@ -187,6 +222,7 @@ class ProfileService:
             "graduation_year": profile.graduation_year,
             "current_study_year": profile.current_study_year,
             "preferred_locations": json.loads(profile.preferred_locations_json or "[]"),
+            "admissible_graduation_years": list(_parse_admissible_years(profile.admissible_graduation_years_json)),
             "work_authorisation_configured": bool(profile.work_authorisation_ciphertext),
             "requires_sponsorship": (
                 self._requires_sponsorship(profile)

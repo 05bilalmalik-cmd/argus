@@ -36,10 +36,10 @@ def test_profile_service_encrypts_sensitive_fields_and_returns_snapshot(tmp_path
         service = ProfileService(session, crypto)
         service.update(
             ProfileUpdate(
-                first_name="Alex",
-                last_name="Sample",
-                email="alex@example.test",
-                university="Example University",
+                first_name="Demo",
+                last_name="Candidate",
+                email="demo.candidate@example.test",
+                university="Lancaster University",
                 degree="BSc Finance with Year in Industry",
                 graduation_year=2029,
                 preferred_locations=("London", "Manchester"),
@@ -56,7 +56,7 @@ def test_profile_service_encrypts_sensitive_fields_and_returns_snapshot(tmp_path
         assert snapshot.expected_graduation_year == 2029
         assert snapshot.requires_sponsorship is False
         assert snapshot.work_authorisation_approved is True
-        assert automation["identity.first_name"] == "Alex"
+        assert automation["identity.first_name"] == "Demo"
         assert automation["legal.work_authorisation"] == "Exact user-approved wording"
 
 
@@ -66,7 +66,7 @@ def test_unapproved_work_authorisation_is_not_exposed_to_automation(tmp_path: Pa
         service = ProfileService(session, crypto)
         service.update(
             ProfileUpdate(
-                first_name="Alex",
+                first_name="Demo",
                 work_authorisation="Not approved",
                 requires_sponsorship=True,
                 work_authorisation_approved=False,
@@ -444,7 +444,7 @@ def test_document_service_sanitises_filename_hashes_and_verifies_content(tmp_pat
     with db.session_scope() as session:
         documents = DocumentService(session, settings.documents_dir)
         stored = documents.store_bytes(
-            filename="../../Alex CV 2027.pdf",
+            filename="../../Demo CV 2027.pdf",
             content=b"approved cv bytes",
             kind="cv",
             tags=("private-credit", "london"),
@@ -452,7 +452,7 @@ def test_document_service_sanitises_filename_hashes_and_verifies_content(tmp_pat
         )
 
         assert Path(stored.path).parent == settings.documents_dir
-        assert Path(stored.path).name.startswith("Alex_CV_2027")
+        assert Path(stored.path).name.startswith("Demo_CV_2027")
         assert ".." not in Path(stored.path).name
         assert len(stored.sha256) == 64
         assert documents.verify(stored) is True

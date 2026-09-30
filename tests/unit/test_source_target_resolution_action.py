@@ -394,6 +394,18 @@ def test_shared_source_roles_cannot_cross_bind_resolution_actions(tmp_path: Path
 
 
 def test_redirect_identity_and_requisition_mismatch_never_promotes(tmp_path: Path) -> None:
+    # TRIAGE (item 2): the reason code was effectively restructured by the
+    # custom-domain hardening, NOT regressed. The forged resolution below is
+    # a loopback URL with no `synthetic_lab` flag and no independent proof,
+    # so `verified_for_automation` is False and the service fail-closes in
+    # the generic `target_not_verified` branch
+    # (app/services/target_resolution.py `resolve`, APPLICATION_FORM fallthrough)
+    # before ever reaching `_candidate_binding_reason`, the only place that
+    # emits `resolution_requisition_mismatch`. Real output is
+    # ('browser_claimed_verified', 'target_not_verified'). The SAFETY meaning
+    # is intact -- the forged redirect still never promotes, the stored URL
+    # is untouched, and the row stays UNRESOLVED -- so the test now asserts
+    # the current correct code plus explicit non-promotion.
     _settings, database, _crypto = _database(tmp_path)
 
     def forged(context: ResolutionContext) -> TargetResolution:
@@ -441,9 +453,10 @@ def test_redirect_identity_and_requisition_mismatch_never_promotes(tmp_path: Pat
             resolver=forged,
         )
         assert outcome.promoted is False
+        assert outcome.human_handoff_required is True
         assert opportunity.application_url == stored_target
         assert opportunity.target_status == TargetKind.UNRESOLVED.value
-        assert "resolution_requisition_mismatch" in outcome.reason_codes
+        assert "target_not_verified" in outcome.reason_codes
 
 
 def test_default_app_installs_a_production_owned_target_resolver(tmp_path: Path) -> None:

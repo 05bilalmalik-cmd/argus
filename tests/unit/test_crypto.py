@@ -9,11 +9,11 @@ from app.security.crypto import CryptoBox
 def test_crypto_box_round_trips_unicode_and_reuses_key(tmp_path: Path) -> None:
     key_path = tmp_path / "secret.key"
     first = CryptoBox.from_path(key_path)
-    token = first.encrypt("Exact approved answer — Alex")
+    token = first.encrypt("Exact approved answer — Demo")
     second = CryptoBox.from_path(key_path)
 
     assert token.startswith("enc:v1:")
-    assert second.decrypt(token) == "Exact approved answer — Alex"
+    assert second.decrypt(token) == "Exact approved answer — Demo"
     assert key_path.read_bytes().strip()
 
 

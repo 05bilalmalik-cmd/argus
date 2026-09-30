@@ -14,7 +14,7 @@ def configure_candidate(base_url: str) -> None:
             "first_name": "Demo",
             "last_name": "Candidate",
             "email": "demo@example.test",
-            "university": "Example University",
+            "university": "Lancaster University",
             "degree": "BSc Finance",
             "graduation_year": 2028,
             "work_authorisation": "Approved local laboratory wording",
@@ -123,7 +123,7 @@ def run(base_url: str, application_id: str) -> dict:
 
 def test_standard_mock_ats_submits_and_captures_receipt(live_server) -> None:
     configure_candidate(live_server.base_url)
-    application_id = prepare(live_server, "standard")
+    application_id = prepare(live_server, "standard-legal-free")
 
     outcome = run(live_server.base_url, application_id)
 
@@ -135,7 +135,50 @@ def test_standard_mock_ats_submits_and_captures_receipt(live_server) -> None:
     assert outcome["screenshot_path"].endswith(".png")
     submissions = httpx.get(f"{live_server.base_url}/api/lab/submissions").json()
     assert len(submissions) == 1
-    assert submissions[0]["scenario"] == "standard"
+    assert submissions[0]["scenario"] == "standard-legal-free"
+
+
+def test_original_standard_keeps_legal_handoff_without_authority_or_post(
+    live_server,
+) -> None:
+    """Untouched legal-bearing twin: sponsorship never auto-fills.
+
+    The original ``standard`` fixture still proves the production guard:
+    exact ``approved_legal_answer_missing``, a handoff session that never
+    reaches FINAL_REVIEW, no confirmable authority, zero employer POSTs.
+    """
+    configure_candidate(live_server.base_url)
+    application_id = prepare(live_server, "standard")
+
+    review = httpx.post(
+        f"{live_server.base_url}/api/applications/{application_id}/run",
+        params={"mode": "prefill", "headed": "true"},
+        timeout=30,
+    )
+    review.raise_for_status()
+    payload = review.json()
+    assert payload["state"] == "NEEDS_USER"
+    assert payload["risk_level"] == 3
+    assert payload["blocked_reasons"] == ["approved_legal_answer_missing"]
+    session_id = payload.get("handoff_session_id")
+    assert session_id, payload
+
+    manifest = httpx.post(
+        f"{live_server.base_url}/api/handoff/sessions/{session_id}/final-manifest",
+        json={"application_id": application_id},
+        timeout=30,
+    )
+    manifest.raise_for_status()
+    assert manifest.json().get("state") != "FINAL_REVIEW"
+
+    confirmed = httpx.post(
+        f"{live_server.base_url}/api/handoff/sessions/{session_id}/confirm",
+        json={"application_id": application_id},
+        timeout=30,
+    )
+    confirmed.raise_for_status()
+    assert "authority" not in confirmed.json()
+    assert httpx.get(f"{live_server.base_url}/api/lab/submissions").json() == []
 
 
 @pytest.mark.parametrize(

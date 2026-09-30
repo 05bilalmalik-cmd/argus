@@ -104,11 +104,18 @@ def test_generic_adapter_inspects_semantic_labels_radio_options_and_files() -> N
 
     assert [field.question.label for field in fields] == [
         "First name",
-        "Will you require sponsorship?",
+        "Will you require sponsorship? — Yes — No",
         "Upload CV",
     ]
     assert fields[1].question.options == ("Yes", "No")
     assert fields[2].question.field_type == "file"
+    # Field-context enrichment keeps the legend as the scoping question stem
+    # and appends the radio option labels; the sponsorship semantics must stay
+    # exact rather than being discarded or weakened.
+    assert fields[1].question.label.startswith("Will you require sponsorship?")
+    assert "Will you require sponsorship?" in fields[1].question.label
+    for option in fields[1].question.options:
+        assert option in fields[1].question.label
 
 
 def test_generic_adapter_surfaces_assessment_and_captcha_handoffs() -> None:

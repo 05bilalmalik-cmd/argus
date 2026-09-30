@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>ARGUS — Internship Tracker</title>
+  <link rel="stylesheet" href="/static/tracker.css">
+  <script src="/static/tracker.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to openings</a>
+<aside class="rail" aria-label="Tracker navigation">
+  <a class="brand" href="/" aria-label="ARGUS tracker home"><span class="brand-mark">A</span><span>ARGUS<small>INTERNSHIP TRACKER</small></span></a>
+  <div class="rail-label">YOUR APPLICATION CYCLE</div>
+  <nav aria-label="Primary">
+    <button class="nav-item active" data-view="all" aria-current="page"><span>01</span>All openings<b id="nav-total">—</b></button>
+    <button class="nav-item" data-view="saved"><span>02</span>Saved roles<b id="nav-saved">—</b></button>
+    <button class="nav-item" data-view="fit"><span>03</span>Fit shortlist<b id="nav-fit">—</b></button>
+    <button class="nav-item" data-view="sources"><span>04</span>Source health<b id="nav-health">—</b></button>
+    <button class="nav-item" data-view="automation"><span>05</span>Automation<b id="nav-automation">—</b></button>
+    <button class="nav-item" data-view="alerts"><span>06</span>Alert history<b id="nav-alerts">—</b></button>
+  </nav>
+  <section class="prep-link">
+    <div class="rail-label">OPTIONAL WORKSPACE</div>
+    <a href="http://127.0.0.1:8787" target="_blank" rel="noopener noreferrer">Application preparation <span aria-hidden="true">↗</span></a>
+    <p>Open existing ARGUS. Export selected results as CSV to transfer roles. No application is sent by this tracker.</p>
+  </section>
+  <div class="rail-bottom"><span class="local-indicator" aria-hidden="true"></span>Local data. No AI required.<button id="theme" type="button" aria-label="Switch colour theme">◐</button></div>
+</aside>
+<main id="main">
+  <header class="topbar"><span class="breadcrumb">RESEARCH / EARLY CAREERS</span><span id="connection" role="status" aria-live="polite">Connecting to tracker…</span></header>
+  <section class="heading">
+    <div><div class="eyebrow">THE NEXT OPPORTUNITY, IN ONE PLACE</div><h1 id="page-title">Internship radar<span aria-hidden="true">.</span></h1><p id="page-subtitle">Summer internships, industrial placements and spring weeks.</p></div>
+    <div class="actions"><a id="export" class="button" href="/api/export.csv">Export CSV <span aria-hidden="true">↓</span></a><button id="refresh" class="button primary" type="button">Refresh pipeline <span aria-hidden="true">↻</span></button></div>
+  </section>
+  <section class="metrics" aria-label="Inventory summary">
+    <div><span id="count-total">—</span><small>roles collected · all locations</small></div>
+    <div><span id="count-new">—</span><small>first detected in 24h · all locations</small></div>
+    <div><span id="count-saved">—</span><small>saved to your tracker</small></div>
+    <div><span id="count-sources">—</span><small>sources needing attention</small></div>
+  </section>
+  <section class="evidence-metrics" aria-label="Evidence and fit summary">
+    <div><span id="count-potential">—</span><small>potential fit screen</small></div>
+    <div><span id="count-review">—</span><small>review before acting</small></div>
+    <div><span id="count-verified">—</span><small>availability open evidence</small></div>
+    <div><span id="count-unknown">—</span><small>availability not checked</small></div>
+    <span id="intelligence-state" class="status-chip neutral">FIT SCREEN NOT REPORTED</span>
+  </section>
+  <section id="pipeline-panel" class="pipeline-panel" aria-labelledby="pipeline-heading">
+    <div class="panel-heading"><div><div class="eyebrow">AUTOMATION CONTROL</div><h2 id="pipeline-heading">Evidence pipeline</h2></div><span id="pipeline-state" class="status-chip neutral">NOT REPORTED</span></div>
+    <div class="pipeline-meta"><span>Version <strong id="pipeline-version">—</strong></span><span>Started <strong id="pipeline-started">Not reported</strong></span><span>Last finished <strong id="pipeline-finished">Not reported</strong></span><span id="pipeline-message">No pipeline run has been recorded.</span></div>
+    <ol id="pipeline-stages" class="pipeline-stages" aria-label="Pipeline stages">
+      <li data-stage="discovery"><span class="stage-index">01</span><span class="stage-name">Discovery</span><span class="stage-status status-chip neutral">NOT REPORTED</span><small class="stage-result">Result not reported</small></li>
+      <li data-stage="verification"><span class="stage-index">02</span><span class="stage-name">Verification</span><span class="stage-status status-chip neutral">NOT REPORTED</span><small class="stage-result">Result not reported</small></li>
+      <li data-stage="delivery"><span class="stage-index">03</span><span class="stage-name">Delivery</span><span class="stage-status status-chip neutral">NOT REPORTED</span><small class="stage-result">Result not reported</small></li>
+    </ol>
+    <div id="delivery-health" class="delivery-health" aria-live="polite"><span>Delivery state is not reported.</span><a href="/settings/email">Review mail setup <span aria-hidden="true">↗</span></a></div>
+  </section>
+  <div id="source-warning" class="notice" hidden></div>
+  <section id="openings-panel">
+    <div class="filterbar">
+      <label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search company, role or location…" aria-label="Search company, role or location"><kbd>/</kbd></label>
+      <label class="select-label">Programme<select id="programme"><option value="">All programmes</option><option value="year_in_industry">Industrial placements</option><option value="spring_week">Spring weeks</option><option value="summer">Summer internships</option></select></label>
+      <label class="select-label">Progress<select id="stage"><option value="">Any stage</option><option value="not_applied">Not applied</option><option value="applied">Applied</option><option value="assessment">Assessment</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option></select></label>
+      <label class="select-label">Fit screen<select id="match-status"><option value="">All fit states</option><option value="potential,review">Potential + review</option><option value="potential">Potential only</option><option value="review">Review only</option><option value="excluded">Excluded</option></select></label>
+      <label class="select-label">Availability<select id="availability"><option value="">All evidence states</option><option value="open">Verified open</option><option value="closed">Verified closed</option><option value="unknown">Unknown / not checked</option></select></label>
+      <label class="select-label">Sort<select id="sort"><option value="newest">Newest detected</option><option value="deadline">Deadline first</option><option value="priority">Priority / fit</option></select></label>
+    </div>
+    <div class="filter-secondary">
+      <label><input id="uk-only" type="checkbox" checked> UK locations</label>
+      <label><input id="new-only" type="checkbox"> New to tracker (24h)</label>
+      <label><input id="deadline-soon" type="checkbox"> Deadline within 14 days</label>
+      <label><input id="include-expired" type="checkbox"> Include expired deadlines</label>
+      <button id="clear" class="text-button" type="button">Reset filters</button>
+      <span id="result-count" aria-live="polite">Loading openings…</span>
+    </div>
+    <div class="table-wrap" id="jobs-table-wrap">
+      <table class="jobs-table"><caption class="sr-only">Internship openings. Source posting dates and first-detected times are separate observations.</caption>
+        <thead><tr><th scope="col"><span class="sr-only">Save</span></th><th scope="col">Company / role</th><th scope="col">Programme</th><th scope="col">Location</th><th scope="col">Fit screen</th><th scope="col">Availability</th><th scope="col">Source deadline</th><th scope="col">Posted / first detected</th><th scope="col">My progress</th><th scope="col">Open</th></tr></thead>
+        <tbody id="job-rows"></tbody>
+      </table>
+      <div id="empty" class="empty" hidden><span aria-hidden="true">∅</span><h2>No matching openings</h2><p>Try removing filters. If this is a new tracker, refresh the pipeline to start collecting.</p></div>
+    </div>
+    <div class="pagination"><span id="page-info"></span><div><button id="previous" class="button" type="button">← Previous</button><button id="next" class="button" type="button">Next →</button></div></div>
+    <p class="data-note">Source listings are observations, not eligibility checks. “First detected” starts when this tracker sees a role; it is never a posting date. Fit is a transparent screen, not a guarantee of eligibility. Check requirements, availability and work rights on the employer’s site.</p>
+  </section>
+  <section id="sources-panel" hidden aria-labelledby="sources-heading">
+    <div class="section-title"><div class="eyebrow">COVERAGE ACCOUNTING</div><h2 id="sources-heading">Every source, accounted for.</h2><p>Empty means a validated feed had no matching roles. Partial, failed and never-checked captures are never silently counted as complete.</p></div>
+    <div class="table-wrap"><table class="sources-table"><thead><tr><th scope="col">Source</th><th scope="col">Status</th><th scope="col">Roles observed</th><th scope="col">Last attempt</th><th scope="col">Last complete success</th><th scope="col">Detail</th></tr></thead><tbody id="source-rows"></tbody></table><div id="source-empty" class="empty-state" hidden><strong>NEVER CHECKED</strong><span>No source check has completed. Coverage and source health are unknown.</span></div></div>
+    <p class="data-note">A source failure does not prove that an employer closed a role. Last complete success is separate from the latest attempt.</p>
+  </section>
+  <section id="automation-panel" hidden aria-labelledby="automation-heading">
+    <div class="section-title"><div class="eyebrow">PROFILE / PIPELINE</div><h2 id="automation-heading">Automation control.</h2><p>Set the facts used by the fit screen. Unknown grades, work rights and sponsorship are left unknown; they are never turned into a positive match.</p></div>
+    <div class="automation-layout">
+      <form id="profile-form" class="control-panel" novalidate>
+        <div class="panel-heading"><div><div class="eyebrow">MATCHING PROFILE</div><h3>Known constraints</h3></div><span id="profile-load-state" class="status-chip neutral">NOT LOADED</span></div>
+        <div class="form-grid">
+          <label>Degree / subject<input id="profile-degree" name="degree" type="text" maxlength="160" autocomplete="off"></label>
+          <fieldset><legend>Graduation years</legend><div class="year-grid"><label>Summer<input id="profile-summer-year" type="number" min="2000" max="2100" step="1" inputmode="numeric"></label><label>Year in industry<input id="profile-industry-year" type="number" min="2000" max="2100" step="1" inputmode="numeric"></label><label>Spring week<input id="profile-spring-year" type="number" min="2000" max="2100" step="1" inputmode="numeric"></label></div></fieldset>
+          <fieldset><legend>Tracked programmes</legend><div class="check-grid"><label><input id="profile-role-summer" type="checkbox" value="summer"> Summer internship</label><label><input id="profile-role-industry" type="checkbox" value="year_in_industry"> Industrial placement</label><label><input id="profile-role-spring" type="checkbox" value="spring_week"> Spring week</label></div><label class="subfield">Other saved programme values<input id="profile-roles-other" type="text" autocomplete="off" placeholder="Preserved values, comma-separated"></label></fieldset>
+          <fieldset><legend>Desired locations</legend><div class="check-grid"><label><input id="profile-location-uk" type="checkbox" value="UK"> UK</label><label><input id="profile-location-london" type="checkbox" value="London"> London</label><label><input id="profile-location-remote" type="checkbox" value="Remote"> Remote</label></div><label class="subfield">Other saved location values<input id="profile-locations-other" type="text" autocomplete="off" placeholder="Preserved values, comma-separated"></label></fieldset>
+        </div>
+        <p id="profile-unknown-note" class="uncertainty-note">Profile fields not shown here are retained as-is. Unknown is not eligible.</p>
+        <p id="profile-status" class="form-status" role="status" aria-live="polite">Load the matching profile to edit it.</p>
+        <div class="dialog-actions"><button id="profile-cancel" class="button" type="button">Reload profile</button><button class="button primary" type="submit">Save profile</button></div>
+      </form>
+      <aside class="control-panel profile-readout" aria-labelledby="profile-readout-heading"><div class="eyebrow">DECISION BOUNDARY</div><h3 id="profile-readout-heading">What this screen can say</h3><p id="profile-summary">Profile not loaded.</p><ul><li>Potential means the known signals align.</li><li>Review means one or more facts need a human check.</li><li>Excluded means an explicit contradiction was found.</li><li>No state means no check was recorded.</li></ul><p id="profile-extra-fields" class="data-note">Additional fields are retained on save.</p><a class="button" href="/settings/email">Configure email delivery <span aria-hidden="true">↗</span></a></aside>
+    </div>
+  </section>
+  <section id="alerts-panel" hidden aria-labelledby="alerts-heading">
+    <div class="section-title"><div class="eyebrow">DELIVERY LOG</div><h2 id="alerts-heading">Alert history.</h2><p>Events are the durable record. A queued or provider-sent event is not a delivery receipt unless delivery evidence is present.</p></div>
+    <div class="alert-console control-panel"><div class="alert-summary"><div><span class="summary-label">Delivery state</span><strong id="alert-state">NOT REPORTED</strong></div><div><span class="summary-label">Pending</span><strong id="alert-pending">—</strong></div><div><span class="summary-label">Last error</span><strong id="alert-last-error">Not reported</strong></div><a id="email-settings-link" class="button" href="/settings/email">Review mail setup <span aria-hidden="true">↗</span></a></div><div class="table-wrap"><table class="alerts-table"><thead><tr><th scope="col">Created</th><th scope="col">Event</th><th scope="col">Status</th><th scope="col">Subject</th><th scope="col">Provider evidence</th><th scope="col">Error</th></tr></thead><tbody id="alert-rows"></tbody></table><div id="alerts-empty" class="empty-state" hidden><strong>NO EVENTS</strong><span>No alert events have been recorded.</span></div></div></div>
+    <p class="data-note">“Sent” records that a provider handoff was attempted. It is not shown as delivered without a delivered timestamp or equivalent provider evidence.</p>
+  </section>
+  <footer><span>ARGUS / TRACKER-FIRST</span><span id="next-refresh">Automatic refresh status loading…</span></footer>
+</main>
+<dialog id="details" aria-labelledby="detail-title">
+  <form id="details-form"><div class="dialog-top"><span class="eyebrow">EVIDENCE / YOUR NOTES</span><button id="close-dialog" type="button" aria-label="Close details">×</button></div>
+    <h2 id="detail-title"></h2><p id="detail-employer"></p><p id="detail-summary" class="detail-summary"></p>
+    <section class="detail-block"><div class="eyebrow">SOURCE DESCRIPTION</div><p id="detail-description" class="source-description"></p></section>
+    <dl id="detail-facts"></dl>
+    <section id="detail-fit" class="detail-block"><div class="eyebrow">FIT SCREEN / NOT A GUARANTEE</div><div class="fit-detail-grid"><div><strong>Reasons</strong><ul id="detail-reasons"></ul></div><div><strong>Unknowns to check</strong><ul id="detail-unknowns"></ul></div></div></section>
+    <section id="detail-provenance" class="detail-block"><div class="eyebrow">PROVENANCE</div><p>Each record below is an observation, not an eligibility decision.</p><ul id="detail-evidence"></ul></section>
+    <label>Progress<select id="detail-stage"><option value="not_applied">Not applied</option><option value="applied">Applied</option><option value="assessment">Assessment</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option></select></label>
+    <label>Next action due<input id="detail-due" type="date"></label>
+    <label>Notes<textarea id="detail-notes" maxlength="10000" rows="5" placeholder="Application limit, test deadline, interview prep…"></textarea></label>
+    <p class="data-note">These are your own tracking notes. Marking “Applied” does not submit an application or create a verified receipt.</p>
+    <p id="detail-error" class="form-status error-text" role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><a id="detail-apply" class="button" target="_blank" rel="noopener noreferrer">Open employer <span aria-hidden="true">↗</span></a><button class="button primary" type="submit">Save notes</button></div>
+  </form>
+</dialog>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

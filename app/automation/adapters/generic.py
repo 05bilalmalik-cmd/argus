@@ -20,6 +20,51 @@ from app.automation.targets import (
 )
 
 
+def _clean(text: object) -> str:
+    """Normalise whitespace; never raise."""
+    if text is None:
+        return ""
+    return " ".join(str(text).split()).strip()
+
+
+def _dedupe_parts(parts: list[str]) -> list[str]:
+    """Deduplicate case-insensitively, preserving order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in parts:
+        cleaned = _clean(part)
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+    return out
+
+
+def _enrich_label_for_classifier(
+    label: str,
+    field_type: str,
+    options: tuple[str, ...],
+    option_label: str,
+) -> str:
+    """Enrich a field's label with structural context for the classifier.
+
+    Mirrors the enrichment in field_context.py: combine the field's own label
+    with its option labels (select/radio) or checkbox option_label so the
+    deterministic classifier can match on the full context.
+    """
+    parts: list[str] = [label]
+    if field_type == "select" and options:
+        parts.extend(options)
+    elif field_type == "radio" and options:
+        parts.extend(options)
+    elif field_type == "checkbox" and option_label:
+        parts.append(option_label)
+    return " — ".join(_dedupe_parts(parts))
+
+
 # Controls that are never application questions wherever they appear.
 _NON_QUESTION_TYPES = frozenset({"hidden", "submit", "reset", "image", "button"})
 
@@ -219,24 +264,72 @@ async () => {
       const legend = fieldset && fieldset.querySelector(':scope > legend');
       if (legend && textOf(legend)) return textOf(legend);
     }
+    let own = '';
     if (el.id) {
       const explicit = document.querySelector('label[for="' + cssEscape(el.id) + '"]');
-      if (explicit && textOf(explicit)) return textOf(explicit);
+      if (explicit && textOf(explicit)) own = textOf(explicit);
     }
-    const wrapped = el.closest('label');
-    if (wrapped) {
-      const clone = wrapped.cloneNode(true);
-      clone.querySelectorAll('input, select, textarea').forEach(n => n.remove());
-      if (textOf(clone)) return textOf(clone);
+    if (!own) {
+      const wrapped = el.closest('label');
+      if (wrapped) {
+        const clone = wrapped.cloneNode(true);
+        clone.querySelectorAll('input, select, textarea').forEach(n => n.remove());
+        if (textOf(clone)) own = textOf(clone);
+      }
     }
-    const aria = el.getAttribute('aria-label');
-    if (aria) return aria.trim();
+    let ariaLabel = '';
+    if (!own) {
+      const aria = el.getAttribute('aria-label');
+      if (aria) own = aria.trim();
+      ariaLabel = aria ? aria.trim() : '';
+    }
+    let labelledByText = '';
     const labelledBy = el.getAttribute('aria-labelledby');
     if (labelledBy) {
       const joined = labelledBy.split(/\s+/).map(id => textOf(document.getElementById(id))).filter(Boolean).join(' ');
-      if (joined) return joined;
+      if (joined) {
+        labelledByText = joined;
+        if (!own) own = joined;
+      }
     }
-    return (el.placeholder || el.name || el.id || el.type || el.tagName).trim();
+    let describedByText = '';
+    const describedBy = el.getAttribute('aria-describedby');
+    if (describedBy) {
+      const joined = describedBy.split(/\s+/).map(id => textOf(document.getElementById(id))).filter(Boolean).join(' ');
+      if (joined) describedByText = joined;
+    }
+    if (!own) {
+      own = (el.placeholder || el.name || el.id || el.type || el.tagName).trim();
+    }
+    // Non-radio fields inside a fieldset keep their own label but gain the
+    // nearest legend as supplementary group context (sensitive wording lives
+    // in the legend). Nearest scope only (:scope > legend on the closest
+    // fieldset) so one group's wording cannot bleed into another field.
+    // Never replaces the own label with an option value.
+    try {
+      const fieldset = el.closest('fieldset');
+      const legend = fieldset && fieldset.querySelector(':scope > legend');
+      const legendText = legend ? textOf(legend) : '';
+      if (legendText) {
+        const lowerOwn = (own || '').toLowerCase();
+        const lowerLegend = legendText.toLowerCase();
+        if (!lowerOwn) return legendText;
+        if (lowerOwn !== lowerLegend) {
+          own = legendText + ' — ' + own;
+        }
+      }
+    } catch (e) {}
+    // Preserve aria-labelledby and aria-describedby as supplementary context
+    // when a visible label exists. Deduplicate by exact normalized equality.
+    const parts = [own];
+    if (labelledByText && labelledByText.toLowerCase() !== own.toLowerCase()) {
+      parts.push(labelledByText);
+    }
+    if (describedByText && describedByText.toLowerCase() !== own.toLowerCase()
+        && describedByText.toLowerCase() !== (labelledByText || '').toLowerCase()) {
+      parts.push(describedByText);
+    }
+    return parts.join(' — ');
   }
 
   function fileLabelFor(el, scopeEl) {
@@ -359,12 +452,12 @@ async () => {
       );
       const boundApplicationMarker = el.hasAttribute('data-ats-application')
         && (roleEvidence || requisitionEvidence || actionEvidence);
-      const positiveRootIdentity = roleEvidence || requisitionEvidence
-        || boundApplicationMarker || credibleControlInventory;
       const hasSubmit = !!Array.from(el.querySelectorAll(
         'button, input[type="submit"], [data-automation-id="submitButton"]'
       )).find(isFinalSubmitControl);
       const applicationText = /apply|application|candidate|resume|cover letter|submit application/.test(descriptor + ' ' + submitText);
+      const positiveRootIdentity = roleEvidence || requisitionEvidence
+        || boundApplicationMarker || credibleControlInventory;
       const qualifies = knownProviderForm
         ? (inputs >= 1 && identitySignals >= 2 && positiveRootIdentity)
         : explicitlyMarked
@@ -822,19 +915,24 @@ class GenericAdapter:
         raw: dict[str, Any] = page.evaluate(_INSPECT_SCRIPT) or {}
         fields: list[InspectedField] = []
         for item in raw.get("fields", []):
+            raw_label = str(item.get("label", "")).strip()
+            field_type = str(item.get("field_type", "text"))
+            options = tuple(str(option) for option in item.get("options", []))
+            option_label = str(item.get("option_label", "")).strip()
+            enriched_label = _enrich_label_for_classifier(raw_label, field_type, options, option_label)
             fields.append(
                 InspectedField(
                     selector=str(item["selector"]),
                     control_type=str(item["control_type"]),
                     value_attribute=str(item.get("value_attribute", "")),
                     question=FormQuestion(
-                        label=str(item.get("label", "")).strip(),
-                        field_type=str(item.get("field_type", "text")),
+                        label=enriched_label,
+                        field_type=field_type,
                         name=str(item.get("name", "")),
                         placeholder=str(item.get("placeholder", "")),
                         required=bool(item.get("required", False)),
-                        options=tuple(str(option) for option in item.get("options", [])),
-                        option_label=str(item.get("option_label", "")).strip(),
+                        options=options,
+                        option_label=option_label,
                     ),
                 )
             )

@@ -1,10 +1,14 @@
 """Background daily sweep for ARGUS.
 
-Runs inside the app process: scans the watched Trackr saves folder, ingests
-new opportunities and drives the autopilot on an explicitly enabled interval,
-plus once shortly after boot. A zero/non-positive interval or OFF mode disables
-the scheduler entirely. Failures are logged, never fatal - a broken sweep must
-not take the dashboard down.
+Runs inside the app process: collects the existing public HTTP discovery
+sources (same ``collect_all`` feed as manual full-sweep, truthful per-source
+reporting), then scans the watched Trackr saves folder and optional live
+Trackr scrape as supplements, ingests new opportunities and drives the
+autopilot on an explicitly enabled interval, plus once shortly after boot.
+A zero/non-positive interval or OFF mode disables the scheduler entirely.
+Failures are logged, never fatal - a broken sweep must not take the
+dashboard down. HTTP harvest is discovery-only; target/CV/eligibility/
+consent gates still apply downstream.
 """
 from __future__ import annotations
 
@@ -21,6 +25,25 @@ logger = logging.getLogger(__name__)
 
 _STOP = threading.Event()
 _THREAD: threading.Thread | None = None
+
+# Bounded public harvest: a cooperative between-source budget, not a strict
+# whole-sweep guarantee. One active source may itself issue several HTTP
+# calls, so a source already running can overrun this bound; each individual
+# call still honors the shared per-request HTTP_TIMEOUT. There is
+# deliberately no threadpool, so the bound can never preempt inflight work —
+# it only stops further sources from starting.
+_PUBLIC_HARVEST_BUDGET_SECONDS = 300.0
+
+
+def _stop_requested(is_cancelled) -> bool:  # noqa: ANN001 - optional callback
+    """True when an explicit shutdown was requested; fail closed on misuse."""
+
+    if is_cancelled is None:
+        return False
+    try:
+        return bool(is_cancelled())
+    except Exception:
+        return True
 
 
 def trackr_folder(data_dir: Path) -> Path:
@@ -91,8 +114,8 @@ def read_sweep_health(data_dir: Path) -> dict[str, object]:
         return {}
 
 
-def run_sweep(app) -> dict[str, object]:  # noqa: ANN001 - FastAPI app instance
-    """One sweep pass: live Trackr scrape -> ingest -> autopilot."""
+def run_sweep(app, *, public_sources=None, is_cancelled=None) -> dict[str, object]:  # noqa: ANN001 - FastAPI app instance
+    """One sweep pass: public sources + live Trackr scrape -> ingest -> autopilot."""
     with _SWEEP_LOCK:
         settings = app.state.settings
         lock = SweepLock(settings.data_dir / "scout-sweep.lock")
@@ -105,7 +128,9 @@ def run_sweep(app) -> dict[str, object]:  # noqa: ANN001 - FastAPI app instance
             record_sweep_health(settings.data_dir, results)
             return results
         try:
-            results = _run_sweep_locked(app)
+            results = _run_sweep_locked(
+                app, public_sources=public_sources, is_cancelled=is_cancelled
+            )
             record_sweep_health(settings.data_dir, results)
             return results
         finally:
@@ -114,19 +139,22 @@ def run_sweep(app) -> dict[str, object]:  # noqa: ANN001 - FastAPI app instance
 
 _SWEEP_LOCK = threading.Lock()
 
-def _run_sweep_locked(app) -> dict[str, object]:  # noqa: ANN001 - FastAPI app instance
-    """One sweep pass: live Trackr scrape -> ingest -> autopilot."""
+def _run_sweep_locked(app, *, public_sources=None, is_cancelled=None) -> dict[str, object]:  # noqa: ANN001 - FastAPI app instance
+    """One sweep pass: public HTTP discovery + Trackr supplement -> ingest -> autopilot."""
     settings = app.state.settings
     results: dict[str, object] = {"at": datetime.now(timezone.utc).isoformat()}
     if not settings.autopilot_enabled:
-        # OFF is a hard scheduler stop: do not fetch live Trackr data, parse
-        # saved pages, or invoke the review/automation pipeline.
+        # OFF is a hard scheduler stop: do not fetch public sources, live
+        # Trackr data, saved pages, or invoke the review/automation pipeline.
         results.update(
             {
                 "skipped": True,
                 "reason": "automation_off",
                 "live_scrape": "disabled",
                 "parsed": 0,
+                "public_sources": "disabled",
+                "per_source": {},
+                "discovery": "disabled",
                 "ingest": "disabled",
                 "autopilot": {
                     "mode": settings.automation_mode.value,
@@ -137,23 +165,134 @@ def _run_sweep_locked(app) -> dict[str, object]:  # noqa: ANN001 - FastAPI app i
         return results
 
     from app.scouting.service import ScoutService
+    from app.scouting.sources.base import collect_all_report
     from app.scouting.trackr import scrape_folder
     from app.scouting.trackr_live import fetch_programmes
+    from app.services.review_digest import send_review_digest
 
     scraped = []
+    # Discovery-only public HTTP harvest (no browser, no login). Trackr live
+    # and saved HTML remain optional supplements below. Existing target/CV/
+    # eligibility/consent gates in ScoutService/autopilot still apply.
+    # The harvest is time-bounded and cancellable; truncation is reported,
+    # never mistaken for empty-success.
+    try:
+        if public_sources is None:
+            public_items, public_report = collect_all_report(
+                settings,
+                deadline_seconds=_PUBLIC_HARVEST_BUDGET_SECONDS,
+                is_cancelled=is_cancelled,
+            )
+        else:
+            public_items, public_report = collect_all_report(
+                settings,
+                sources=public_sources,
+                deadline_seconds=_PUBLIC_HARVEST_BUDGET_SECONDS,
+                is_cancelled=is_cancelled,
+            )
+        scraped.extend(public_items)
+        results["public_sources"] = public_report
+    except Exception as exc:  # noqa: BLE001 - public harvest failing must not kill the sweep
+        # Log the exception type only: the raw message/traceback can embed
+        # request URLs or credentials. The failure itself stays visible via
+        # collector_error below and the failed discovery status.
+        logger.warning(
+            "public source harvest failed (%s); continuing with Trackr supplement",
+            type(exc).__name__,
+        )
+        public_report = {
+            "registered": 0,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "per_source": {},
+            "errors": {"collector": "public harvest failed - see server log"},
+            "total_raw": 0,
+            "total": 0,
+            "skipped": [],
+            "truncated": None,
+            "duplicate_sources": [],
+            "collector_error": f"{type(exc).__name__}: public harvest failed",
+        }
+        results["public_sources"] = public_report
+    if _stop_requested(is_cancelled):
+        results["parsed"] = len(scraped)
+        per_source: dict[str, int] = {}
+        for item in scraped:
+            key = str(getattr(item, "source", "unknown")).split(":", 1)[0]
+            per_source[key] = per_source.get(key, 0) + 1
+        results["per_source"] = per_source
+        results["discovery"] = "partial"
+        results["ingest"] = "cancelled"
+        results["autopilot"] = {
+            "mode": settings.automation_mode.value,
+            "cancelled": "scheduler_stopping",
+        }
+        return results
     if settings.trackr_live_enabled:
         try:
-            scraped = fetch_programmes()
-            results["live_scrape"] = len(scraped)
+            scraped.extend(fetch_programmes())
+            results["live_scrape"] = len(scraped) - int(public_report.get("total", 0))
         except Exception:  # noqa: BLE001 - live scrape failing must not kill the sweep
             logger.exception("trackr live scrape failed; falling back to saved HTML")
             results["live_scrape"] = "failed"
     else:
         results["live_scrape"] = "disabled"
+    if _stop_requested(is_cancelled):
+        results["parsed"] = len(scraped)
+        per_source: dict[str, int] = {}
+        for item in scraped:
+            key = str(getattr(item, "source", "unknown")).split(":", 1)[0]
+            per_source[key] = per_source.get(key, 0) + 1
+        results["per_source"] = per_source
+        results["discovery"] = "partial"
+        results["ingest"] = "cancelled"
+        results["autopilot"] = {
+            "mode": settings.automation_mode.value,
+            "cancelled": "scheduler_stopping",
+        }
+        return results
 
     # saved-HTML drops remain supported as an override/supplement
     scraped.extend(scrape_folder(trackr_folder(settings.data_dir)))
     results["parsed"] = len(scraped)
+    per_source: dict[str, int] = {}
+    for item in scraped:
+        key = str(getattr(item, "source", "unknown")).split(":", 1)[0]
+        per_source[key] = per_source.get(key, 0) + 1
+    results["per_source"] = per_source
+    public_failed = int(public_report.get("failed", 0))
+    public_succeeded = int(public_report.get("succeeded", 0))
+    public_attempted = int(public_report.get("attempted", 0))
+    collector_error = public_report.get("collector_error")
+    truncated = public_report.get("truncated")
+    partial_sources = public_report.get("partial_sources", [])
+    if truncated in ("time_budget", "cancelled"):
+        # Bounded-harvest stop or operator cancellation with rows unattempted:
+        # explicitly partial whatever was collected, never empty-success.
+        results["discovery"] = "partial"
+    elif results["parsed"] == 0 and (
+        collector_error or (public_attempted > 0 and public_succeeded == 0)
+    ):
+        # Collector-level failure, or every source failed, and no Trackr rows:
+        # a failure, never an empty-success.
+        results["discovery"] = "failed"
+    elif collector_error or public_failed > 0 or partial_sources or results["live_scrape"] == "failed":
+        results["discovery"] = "partial"
+    elif results["parsed"] == 0:
+        results["discovery"] = "empty"
+    else:
+        results["discovery"] = "ok"
+    if _stop_requested(is_cancelled):
+        # Explicit shutdown during or after harvest: honor stop intent and do
+        # not touch the database, navigator, autopilot, or digest. Already
+        # collected rows are deliberately left uningested for the next pass.
+        results["ingest"] = "cancelled"
+        results["autopilot"] = {
+            "mode": settings.automation_mode.value,
+            "cancelled": "scheduler_stopping",
+        }
+        return results
     try:
         with app.state.db.session_scope() as session:
             scout = ScoutService(session, settings, app.state.crypto)
@@ -196,6 +335,10 @@ def _run_sweep_locked(app) -> dict[str, object]:  # noqa: ANN001 - FastAPI app i
             except Exception:  # noqa: BLE001 - reminders never break a sweep
                 logger.exception("deadline reminder scan failed")
                 results["deadline_reminders"] = "failed"
+            try:
+                send_review_digest(app)
+            except Exception:  # noqa: BLE001 - digest failure must never break or mask the sweep's own result
+                logger.exception("review digest failed")
     except Exception:  # noqa: BLE001
         logger.exception("scout sweep failed")
         results["error"] = "sweep failed - see server log"
@@ -246,7 +389,10 @@ def _loop(app, interval_hours: float) -> None:  # noqa: ANN001
     _STOP.wait(20)
     while not _STOP.is_set() and _scheduler_enabled(app):
         try:
-            outcome = run_sweep(app)
+            # Cancellation comes only from this owned loop: the global _STOP
+            # may be set during an ordinary manual run, so run_sweep callers
+            # outside the loop get no callback by default.
+            outcome = run_sweep(app, is_cancelled=_STOP.is_set)
             logger.info("scout sweep: %s", outcome)
         except Exception:  # noqa: BLE001
             logger.exception("unexpected sweep failure")

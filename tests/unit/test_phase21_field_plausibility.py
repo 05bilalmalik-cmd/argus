@@ -204,6 +204,8 @@ def test_name_controls_reject_date_contact_and_education_values(
 
 
 def test_exact_option_control_rejects_unmatched_text() -> None:
+    # Legal declarations are gated before plausibility, so this option-control
+    # test uses a non-gated key to exercise the same rejection path.
     plan = _plan(
         _field(
             "Will you require sponsorship?",
@@ -212,7 +214,7 @@ def test_exact_option_control_rejects_unmatched_text() -> None:
             options=("Yes", "No"),
         ),
         offered=REJECTED_SENTINEL,
-        mapping_key=CanonicalKey.SPONSORSHIP,
+        mapping_key=CanonicalKey.MOTIVATION,
     )
 
     _assert_rejected(plan)
@@ -285,7 +287,7 @@ def test_valid_date_and_year_shapes_remain_resolved(
 @pytest.mark.parametrize(
     ("label", "name", "mapping_key", "value"),
     [
-        ("First name", "first_name", CanonicalKey.FIRST_NAME, "Alex"),
+        ("First name", "first_name", CanonicalKey.FIRST_NAME, "Demo"),
         ("Last name", "last_name", CanonicalKey.LAST_NAME, "O'Neill"),
         ("Full name", "full_name", CanonicalKey.FULL_NAME, "Anne-Marie O'Neill"),
     ],
@@ -313,7 +315,7 @@ def test_realistic_names_remain_resolved(
             "University / institution",
             "university",
             CanonicalKey.UNIVERSITY,
-            "Example University",
+            "Lancaster University",
         ),
         ("Degree qualification", "degree", CanonicalKey.DEGREE, "BSc Computer Science"),
     ],
@@ -335,6 +337,8 @@ def test_valid_education_values_remain_resolved(
 
 
 def test_exact_option_matches_case_insensitively_and_uses_provider_casing() -> None:
+    # Legal declarations are gated before option normalisation, so this
+    # option-matching test uses a non-gated key to exercise the same path.
     plan = _plan(
         _field(
             "Will you require sponsorship?",
@@ -343,7 +347,7 @@ def test_exact_option_matches_case_insensitively_and_uses_provider_casing() -> N
             options=("Yes", "No"),
         ),
         offered="yes",
-        mapping_key=CanonicalKey.SPONSORSHIP,
+        mapping_key=CanonicalKey.MOTIVATION,
     )
 
     assert plan.actions[0].value == "Yes"
@@ -383,7 +387,7 @@ def test_academic_year_exact_option_is_not_mistaken_for_a_calendar_date() -> Non
 
 
 def test_study_level_kind_precedes_university_for_current_year_wording() -> None:
-    university = "Example University"
+    university = "Lancaster University"
     plan = _plan(
         _field(
             "Current year in university",
@@ -469,7 +473,7 @@ def test_explicit_date_word_is_not_masked_by_study_year_phrase() -> None:
 
 
 def test_study_year_end_wording_keeps_date_kind_precedence() -> None:
-    value = "Example University"
+    value = "Lancaster University"
     plan = _plan(
         _field("Study year end", name="study_year_end"),
         offered=value,

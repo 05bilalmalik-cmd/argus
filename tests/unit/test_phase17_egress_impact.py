@@ -181,7 +181,7 @@ def _worker(*, enabled: bool, mode: RunMode = RunMode.PREFILL) -> HeadedSessionW
         ),
         (
             _Request(
-                url="http://127.0.0.1:8787/api/validate?email=alex%40example.test",
+                url="http://127.0.0.1:8787/api/validate?email=demo%40example.test",
                 resource_type="xhr",
             ),
             0,
@@ -194,8 +194,8 @@ def _worker(*, enabled: bool, mode: RunMode = RunMode.PREFILL) -> HeadedSessionW
                 resource_type="fetch",
                 post_data="candidate-file",
             ),
-            1,
-            [],
+            0,
+            ["blockedbyclient"],
         ),
     ],
 )
@@ -289,7 +289,7 @@ def test_tolerable_blocks_are_named_in_handoff_reason_and_manifest() -> None:
     "blocked_request",
     [
         _Request(
-            url="http://127.0.0.1:8787/api/validate?email=alex%40example.test",
+            url="http://127.0.0.1:8787/api/validate?email=demo%40example.test",
             resource_type="xhr",
         ),
         _Request(
@@ -359,16 +359,16 @@ def test_candidate_bearing_display_resource_remains_fatal() -> None:
     "blocked_request",
     [
         _Request(
-            url="http://localhost:8787/application/upload?email=alex%40example.test",
+            url="http://localhost:8787/application/upload?email=demo%40example.test",
             method="POST",
             resource_type="fetch",
-            post_data="email=alex%40example.test&file=candidate.pdf",
+            post_data="email=demo%40example.test&file=candidate.pdf",
         ),
         _Request(
-            url="http://localhost:8787/application/submit?email=alex%40example.test",
+            url="http://localhost:8787/application/submit?email=demo%40example.test",
             method="POST",
             resource_type="document",
-            post_data="first_name=Alex&email=alex%40example.test",
+            post_data="first_name=Demo&email=demo%40example.test",
             navigation=True,
         ),
     ],
@@ -584,8 +584,8 @@ def test_fatal_request_stops_prefill_before_remaining_fields_are_touched() -> No
         ),
         mode=RunMode.PREFILL,
         profile_values={
-            "identity.first_name": "Alex",
-            "identity.last_name": "Sample",
+            "identity.first_name": "Demo",
+            "identity.last_name": "Candidate",
         },
         answers={},
         documents={},
