@@ -9,7 +9,7 @@ if (-not (Test-Path ".venv")) {
 }
 $VenvPython = Join-Path $Root ".venv\Scripts\python.exe"
 & $VenvPython -m pip install --upgrade pip
-& $VenvPython -m pip install -e ".[dev]"
+& $VenvPython -m pip install -e ".[dev,bridge]"
 & $VenvPython -m playwright install chromium
 & $VenvPython -m app.cli init
 

@@ -252,6 +252,7 @@ def test_runner_replans_when_same_step_inventory_changes_before_next():
             return False
 
     journey = object.__new__(_OwnerThreadJourney)
+    journey.runner = SimpleNamespace(preparation_guard=None)
     journey.application_id = "dynamic-step"
     journey.opportunity = SimpleNamespace(employer="Example", role_title="Analyst")
     journey.resolution = TargetResolution(

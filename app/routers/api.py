@@ -11,7 +11,7 @@ import unicodedata
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from typing import Annotated
+from typing import Annotated, Callable
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Body, File, Form, Header, HTTPException, Request, Response, UploadFile
@@ -2350,6 +2350,16 @@ def prefill_application(
     application_id: str,
     request: Request,
 ) -> dict[str, object] | JSONResponse:
+    """Public candidate route: no caller-supplied bridge authority or mode."""
+    return _prefill_application(application_id, request)
+
+
+def _prefill_application(
+    application_id: str,
+    request: Request,
+    *,
+    preparation_guard: Callable[[], bool] | None = None,
+) -> dict[str, object] | JSONResponse:
     """Start one candidate-owned, headed PREFILL journey.
 
     This route intentionally has no caller-selected mode, URL, headed flag,
@@ -2358,6 +2368,15 @@ def prefill_application(
     separate compatibility surface.
     """
 
+    if preparation_guard is not None:
+        try:
+            allowed = preparation_guard() is True
+        except Exception:
+            allowed = False
+        if not allowed:
+            raise SubmissionBlocked(
+                "Preparation authority is no longer valid", code="preparation_guard"
+            ) from None
     lock = _prefill_lock(application_id)
     already_in_flight = not lock.acquire(blocking=False)
     if already_in_flight:
@@ -2473,11 +2492,16 @@ def prefill_application(
                 ),
             )
 
+        bridge_options = (
+            {"preparation_guard": preparation_guard}
+            if preparation_guard is not None else {}
+        )
         runner = AutomationRunner(
             request.app.state.db,
             request.app.state.settings,
             request.app.state.crypto,
             handoff_manager=getattr(request.app.state, "handoff_manager", None),
+            **bridge_options,
         )
         try:
             # This is deliberately a constant: no query string or request

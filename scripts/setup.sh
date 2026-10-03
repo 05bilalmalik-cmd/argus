@@ -18,7 +18,7 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,bridge]"
 python -m playwright install chromium
 python -m app.cli init
 

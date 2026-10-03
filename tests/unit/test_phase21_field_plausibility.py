@@ -679,6 +679,7 @@ def test_prefill_adapter_receives_only_plausible_resolved_actions() -> None:
     page = _Page()
     journey = _OwnerThreadJourney.__new__(_OwnerThreadJourney)
     journey.mode = RunMode.PREFILL
+    journey.runner = SimpleNamespace(preparation_guard=None)
     journey.adapter = adapter
     journey.adapter_name = adapter.name
     journey.step_index = 0
