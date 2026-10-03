@@ -61,6 +61,11 @@ _LAB = """<!doctype html><html><head><title>Summer Analyst · ARGUS Test Capital
 </form></main></body></html>"""
 
 
+def render_lab_form(*, staged=False):
+    # A visible Next is a genuine staged boundary, not a successful single page.
+    return _LAB if staged else _LAB.replace('<button type="button">Next</button>', '')
+
+
 class OwnerObserver:
     def __init__(self, expected_url):
         self.expected_url = expected_url
@@ -110,8 +115,15 @@ class OwnerObserver:
                     worker._assert_owner('demo.observe.snapshot')
                     output.update(worker._page.evaluate(_SNAPSHOT))
                     output['owner_thread_id'] = threading.get_ident()
+                    inspector = worker._page.context.browser.new_browser_cdp_session()
+                    try:
+                        arguments = inspector.send('Browser.getBrowserCommandLine')['arguments']
+                        output['actual_headless'] = any(arg.startswith('--headless') for arg in arguments)
+                    finally:
+                        inspector.detach()
                 except Exception as exc:
                     output['error_type'] = type(exc).__name__
+                    output['error_detail'] = str(exc)[:240]
                 finally:
                     event.set()
             return result
@@ -134,7 +146,7 @@ class OwnerObserver:
         with self.lock:
             self.requests[str(live.session_id)] = (event, output)
         assert event.wait(10), 'owner-thread snapshot timed out'
-        assert 'error_type' not in output, 'owner-thread snapshot failed'
+        assert 'error_type' not in output, 'owner-thread snapshot failed: ' + output.get('error_type', '') + ': ' + output.get('error_detail', '')
         counts = output.pop('counts')
         assert isinstance(counts, dict), 'browser instrumentation was not installed before navigation'
         output.update(navigator_owner_thread_id=navigator.diagnostics(live.session_id).owner_thread_id,
@@ -299,7 +311,7 @@ def run_demo(args):
         posts = []
         @app.get('/lab/ats/loopbacklab', response_class=HTMLResponse)
         def synthetic_form():
-            return HTMLResponse(_LAB)
+            return HTMLResponse(render_lab_form(staged=args.staged_form))
         # Specific test lab must precede the built-in catch-all lab route.
         app.router.routes.insert(0, app.router.routes.pop())
         @app.post('/lab/ats/loopbacklab/submit')
@@ -366,7 +378,8 @@ def run_demo(args):
                     request('request_approved_preparation', idempotency_key='synthetic_demo_001')], 'prepare')
                 assert replies[0]['status'] == 'READY' and replies[0]['pending'] == 1
                 prepared = replies[1]
-                if prepared['status'] != 'PREFILLED_HANDOFF':
+                expected_status = 'HUMAN_REQUIRED' if args.staged_form else 'PREFILLED_HANDOFF'
+                if prepared['status'] != expected_status:
                     write_json(args.evidence_dir / 'blocked-readback-native-replies.json', invoke_native(
                         args, private, credential, [
                             request('get_preparation_run', run_id=prepared['run_id']),
@@ -384,10 +397,11 @@ def run_demo(args):
                     with app.state.db.session_scope() as session:
                         write_json(args.evidence_dir / 'blocked-production.json', [
                             {'run_id': r.id, 'state': r.state, 'mode': r.mode,
+                             'error': r.error, 'field_audit': json.loads(r.receipt_json or '{}'),
                              'receipt_present': r.receipt_json not in (None, '', '{}', 'null'),
                              'receipt_keys': sorted(json.loads(r.receipt_json or '{}'))}
                             for r in session.scalars(select(AutomationRun))])
-                assert prepared['status'] == 'PREFILLED_HANDOFF', 'bridge did not report verified completed PREFILL'
+                assert prepared['status'] == expected_status, 'bridge did not report the expected verified boundary'
                 assert prepared['reason'] == 'HANDOFF'
                 output['bridge_run_id'] = prepared['run_id']
             proof = observer.snapshot(app, application_id, len(posts))
@@ -409,7 +423,7 @@ def run_demo(args):
                 assert replies[0] == prepared == replies[2], 'run/replay mismatch'
                 assert replies[1]['handoffs'] == [{'run_id': prepared['run_id'], 'status': prepared['status'], 'reason': prepared['reason']}]
                 assert replies[1]['next_cursor'] is None
-                assert replies[3]['status'] == replies[4]['status'] == 'BUSY'
+                assert replies[3]['status'] == replies[4]['status'] == 'PAUSED'
                 assert replies[5]['status'] == replies[6]['status'] == 'PAUSED'
                 after = observer.snapshot(app, application_id, len(posts))
                 write_json(args.evidence_dir / 'browser-after-replay.json', after)

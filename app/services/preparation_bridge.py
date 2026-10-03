@@ -21,6 +21,7 @@ from sqlalchemy import select
 
 from app.bridge.storage import BridgeStorage
 from app.bridge.protocol import validate_reply
+from app.bridge.evidence import unsafe_persisted_receipt
 from app.models import Application, AutomationRun, CandidateProfile, AnswerEntry, Document, ConflictRule
 from app.services.applications import ApplicationService
 
@@ -305,7 +306,7 @@ class PreparationBridge:
             session_id = result.get('handoff_session_id')
             with self.database.SessionLocal() as session:
                 underlying = session.get(AutomationRun, underlying_id) if canonical_uuid(underlying_id) else None
-                integrity = self._submission_evidence(result) or (underlying is not None and (underlying.state in {'SUBMITTED', 'CONFIRMATION_VERIFIED', 'CONFIRMED', 'UNKNOWN'} or underlying.receipt_json not in (None, '', '{}', 'null')))
+                integrity = self._submission_evidence(result) or (underlying is not None and (underlying.state in {'SUBMITTED', 'CONFIRMATION_VERIFIED', 'CONFIRMED', 'UNKNOWN', 'SUBMISSION_UNKNOWN'} or unsafe_persisted_receipt(underlying.receipt_json)))
                 correlated = underlying is not None and underlying.application_id == grant['application_id'] and underlying.mode == 'prefill' and underlying.state in {'NEEDS_USER', 'READY_TO_SUBMIT'}
             if integrity:
                 self._pause('INTEGRITY')
@@ -331,7 +332,7 @@ class PreparationBridge:
             for key, item in value.items():
                 if key in {'receipt', 'receipt_json', 'submitted', 'click_boundary_crossed', 'submit_clicked', 'final_click_attempted', 'submission_attempted', 'next_clicked', 'apply_clicked'} and item:
                     return True
-                if key in {'state', 'status'} and item in ('SUBMITTED', 'CONFIRMATION_VERIFIED', 'CONFIRMED', 'UNKNOWN'):
+                if key in {'state', 'status'} and item in ('SUBMITTED', 'CONFIRMATION_VERIFIED', 'CONFIRMED', 'UNKNOWN', 'SUBMISSION_UNKNOWN'):
                     return True
                 if cls._submission_evidence(item):
                     return True

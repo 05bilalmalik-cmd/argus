@@ -14,6 +14,13 @@ def _demo():
     return verify_preparation_bridge
 
 
+def test_positive_fixture_is_single_page_and_staged_boundary_is_separate():
+    from scripts.preparation_bridge_demo_server import render_lab_form
+    assert '>Next</button>' not in render_lab_form(staged=False)
+    assert '>Next</button>' in render_lab_form(staged=True)
+    assert 'Submit application' in render_lab_form(staged=False)
+
+
 def test_oracle_rejects_missing_owner_browser_evidence():
     with pytest.raises(AssertionError, match='owner'):
         _demo().assert_browser_proof({}, expected_fields={}, expected_cv_sha256='a' * 64)
@@ -24,11 +31,12 @@ def test_oracle_rejects_missing_owner_browser_evidence():
     {'lab_posts': 1}, {'lab_submissions': 1}, {'prepare_calls': 2},
     {'browser_mutating_requests': ['POST']}, {'navigator_owner_thread_id': 2},
     {'files': {'cv': [{'size': 1, 'sha256': 'b' * 64}]}},
-    {'worker_alive': False}, {'page_url_matches': False},
+    {'worker_alive': False}, {'page_url_matches': False}, {'actual_headless': True},
     {'external_browser_requests': ['GET']}, {'fields': {'first_name': 'Wrong'}},
 ])
 def test_oracle_rejects_false_positive(corrupt):
     proof = dict(owner_thread_id=1, navigator_owner_thread_id=1, worker_alive=True,
+                 actual_headless=False,
                  prepare_calls=1, next_clicks=0, submit_clicks=0, submit_events=0,
                  browser_mutating_requests=[], external_browser_requests=[], lab_posts=0,
                  lab_submissions=0, page_url_matches=True, fields={'first_name': 'Synthetic'},

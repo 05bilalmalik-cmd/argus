@@ -42,6 +42,7 @@ def assert_browser_proof(proof, *, expected_fields, expected_cv_sha256):
     assert proof.get('owner_thread_id'), 'missing owner-thread observation'
     assert proof['owner_thread_id'] == proof.get('navigator_owner_thread_id'), 'wrong owner thread'
     assert proof.get('worker_alive') is True, 'owned browser no longer alive'
+    assert proof.get('actual_headless') is False, 'acceptance requires an actual headed browser'
     assert proof.get('prepare_calls') == 1, 'PREFILL must execute exactly once'
     assert proof.get('next_clicks') == 0, 'Next was clicked'
     assert proof.get('submit_clicks') == 0, 'Submit was clicked'
@@ -137,6 +138,7 @@ def main(argv=None):
     parser.add_argument('--hermes-python', default=str(Path.home() / 'AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe'))
     parser.add_argument('--evidence-dir', type=Path)
     parser.add_argument('--observer-check', action='store_true', help='partial test only; does not claim MCP acceptance')
+    parser.add_argument('--staged-form', action='store_true', help='negative boundary: leave visible Next untouched and require HUMAN_REQUIRED')
     parser.add_argument('--source-worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--native-plan', help=argparse.SUPPRESS)
     parser.add_argument('--native-result', help=argparse.SUPPRESS)
@@ -160,13 +162,14 @@ def main(argv=None):
     baseline = source_hashes(root)
     write_json(attempt / 'source-before.json', baseline)
     manifest = {'status': 'STARTED', 'scope': 'observer-only' if args.observer_check else 'full-native-mcp',
+                'scenario': 'staged-boundary' if args.staged_form else 'single-page-preparation',
                 'attempt_id': attempt.name, 'started_at': time.time(), 'model_inference': False}
     write_json(attempt / 'manifest.json', manifest)
     from scripts.verify import safe_environment
     env = safe_environment(root)
     with tempfile.TemporaryDirectory(prefix='argus-preparation-private-') as private:
         env.update({'ARGUS_DATA_DIR': str(Path(private) / 'data'),
-                    'ARGUS_API_TOKEN': uuid.uuid4().hex, 'ARGUS_FORCE_HEADLESS': 'true',
+                    'ARGUS_API_TOKEN': uuid.uuid4().hex, 'ARGUS_FORCE_HEADLESS': 'false',
                     'ARGUS_ENABLE_APPLY_CLICK': 'false', 'ARGUS_ENABLE_PREPARATION_BRIDGE': 'true',
                     'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONUNBUFFERED': '1',
                     'ARGUS_DEMO_PRIVATE_ROOT': private})
@@ -175,6 +178,8 @@ def main(argv=None):
                    '--hermes-python', args.hermes_python, '--evidence-dir', str(attempt)]
         if args.observer_check:
             command.append('--observer-check')
+        if args.staged_form:
+            command.append('--staged-form')
         manifest['command'] = command
         write_json(attempt / 'manifest.json', manifest)
         # No shell and no process-name cleanup. Child owns server and browser lifecycle.
